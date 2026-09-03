@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Tank3D Arena — Multiplayer</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22><text y=%2224%22 font-size=%2226%22>🎯</text></svg>" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <div id="hud">
+    <div id="healthWrap">
+      <div id="healthBar"></div>
+      <div id="healthLabel">100 / 100</div>
+    </div>
+    <div id="reloadWrap"><div id="reloadBar"></div></div>
+    <div id="crosshair"></div>
+    <div id="killfeed"></div>
+    <div id="scoreboard"></div>
+    <div id="helpText">WASD: di chuyển &nbsp;|&nbsp; Chuột: ngắm &nbsp;|&nbsp; Click/Space: bắn &nbsp;|&nbsp; Esc: thoát ngắm</div>
+    <div id="deathBanner" class="hidden">
+      <div id="deathTitle">Bạn đã bị hạ!</div>
+      <div id="deathSub">Hồi sinh sau <span id="respawnCount">3</span>s…</div>
+    </div>
+  </div>
+
+  <div id="loginOverlay">
+    <div id="loginBox">
+      <h1>Tank3D Arena</h1>
+      <p>Bắn tank 3D nhiều người chơi online</p>
+      <input id="nameInput" maxlength="16" placeholder="Nhập tên của bạn" autocomplete="off" />
+      <button id="playBtn">Vào trận</button>
+      <div id="loginStatus"></div>
+    </div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="vendor/three.min.js"></script>
+  <script src="client.js"></script>
+</body>
+</html>

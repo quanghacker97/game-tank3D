@@ -74,6 +74,208 @@ const BULLET_VISUALS = {
 };
 const BULLET_HEIGHT = 0.68;
 
+// ---------- Sound (Web Audio API — fully synthesized, no asset files) ----------
+const SOUND_MUTED_KEY = 'tank3d_muted_v1';
+const Sound = (() => {
+  let ctx = null;
+  let master = null;
+  let muted = false;
+  try {
+    muted = localStorage.getItem(SOUND_MUTED_KEY) === '1';
+  } catch (e) {
+    /* storage unavailable */
+  }
+
+  function ensureCtx() {
+    if (ctx) return ctx;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    ctx = new AC();
+    master = ctx.createGain();
+    master.gain.value = muted ? 0 : 0.55;
+    master.connect(ctx.destination);
+    return ctx;
+  }
+
+  function resume() {
+    const c = ensureCtx();
+    if (c && c.state === 'suspended') c.resume();
+  }
+
+  function setMuted(v) {
+    muted = v;
+    try {
+      localStorage.setItem(SOUND_MUTED_KEY, muted ? '1' : '0');
+    } catch (e) {
+      /* storage unavailable */
+    }
+    if (master) master.gain.setTargetAtTime(muted ? 0 : 0.55, ctx.currentTime, 0.05);
+  }
+
+  function isMuted() {
+    return muted;
+  }
+
+  function noiseBuffer(duration) {
+    const c = ensureCtx();
+    const buf = c.createBuffer(1, Math.max(1, Math.floor(c.sampleRate * duration)), c.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    return buf;
+  }
+
+  function playTone({ freq = 440, endFreq = null, type = 'sine', duration = 0.15, gain = 0.3, delay = 0 }) {
+    const c = ensureCtx();
+    if (!c || gain <= 0) return;
+    const osc = c.createOscillator();
+    osc.type = type;
+    const g = c.createGain();
+    const t0 = c.currentTime + delay;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (endFreq !== null) osc.frequency.exponentialRampToValueAtTime(Math.max(1, endFreq), t0 + duration);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0001, gain), t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    osc.connect(g);
+    g.connect(master);
+    osc.start(t0);
+    osc.stop(t0 + duration + 0.02);
+  }
+
+  function playNoise({ duration = 0.2, gain = 0.3, filterFreq = 1200, filterType = 'lowpass', delay = 0 }) {
+    const c = ensureCtx();
+    if (!c || gain <= 0) return;
+    const src = c.createBufferSource();
+    src.buffer = noiseBuffer(duration);
+    const filter = c.createBiquadFilter();
+    filter.type = filterType;
+    filter.frequency.value = filterFreq;
+    const g = c.createGain();
+    const t0 = c.currentTime + delay;
+    g.gain.setValueAtTime(Math.max(0.0001, gain), t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    src.connect(filter);
+    filter.connect(g);
+    g.connect(master);
+    src.start(t0);
+    src.stop(t0 + duration + 0.02);
+  }
+
+  const SHOT_PROFILES = {
+    normal: (m) => {
+      playTone({ freq: 620, endFreq: 180, type: 'square', duration: 0.11, gain: 0.28 * m });
+      playNoise({ duration: 0.08, gain: 0.18 * m, filterFreq: 2200 });
+    },
+    laser: (m) => {
+      playTone({ freq: 1600, endFreq: 500, type: 'sawtooth', duration: 0.09, gain: 0.2 * m });
+    },
+    sniper: (m) => {
+      playTone({ freq: 260, endFreq: 60, type: 'square', duration: 0.28, gain: 0.36 * m });
+      playNoise({ duration: 0.2, gain: 0.22 * m, filterFreq: 1500 });
+    },
+    spread: (m) => {
+      playTone({ freq: 700, endFreq: 240, type: 'square', duration: 0.09, gain: 0.22 * m });
+      playNoise({ duration: 0.06, gain: 0.14 * m, filterFreq: 2400 });
+    },
+    explosive: (m) => {
+      playTone({ freq: 340, endFreq: 90, type: 'sawtooth', duration: 0.16, gain: 0.3 * m });
+      playNoise({ duration: 0.12, gain: 0.2 * m, filterFreq: 1000 });
+    },
+  };
+
+  function shot(kind, mult = 1) {
+    const fn = SHOT_PROFILES[kind] || SHOT_PROFILES.normal;
+    fn(Math.max(0, mult));
+  }
+
+  function hit(mult = 1) {
+    playNoise({ duration: 0.1, gain: 0.3 * mult, filterFreq: 900, filterType: 'bandpass' });
+    playTone({ freq: 150, endFreq: 60, type: 'triangle', duration: 0.1, gain: 0.21 * mult });
+  }
+
+  function blocked(mult = 1) {
+    playTone({ freq: 1100, endFreq: 1400, type: 'triangle', duration: 0.12, gain: 0.25 * mult });
+  }
+
+  function explosion(mult = 1, big = false) {
+    playNoise({ duration: big ? 0.55 : 0.35, gain: (big ? 0.5 : 0.35) * mult, filterFreq: 700, filterType: 'lowpass' });
+    playTone({ freq: big ? 160 : 220, endFreq: 40, type: 'sawtooth', duration: big ? 0.5 : 0.32, gain: (big ? 0.4 : 0.3) * mult });
+  }
+
+  function pickup() {
+    playTone({ freq: 660, type: 'sine', duration: 0.09, gain: 0.22 });
+    playTone({ freq: 990, type: 'sine', duration: 0.12, gain: 0.22, delay: 0.07 });
+  }
+
+  function click() {
+    playTone({ freq: 500, type: 'triangle', duration: 0.05, gain: 0.15 });
+  }
+
+  function lowHealthBeep() {
+    playTone({ freq: 880, type: 'square', duration: 0.09, gain: 0.18 });
+  }
+
+  function stageClear() {
+    [660, 880, 1100].forEach((f, i) => playTone({ freq: f, type: 'triangle', duration: 0.18, gain: 0.25, delay: i * 0.12 }));
+  }
+
+  function stageFailed() {
+    [420, 320, 220].forEach((f, i) => playTone({ freq: f, type: 'sawtooth', duration: 0.22, gain: 0.25, delay: i * 0.14 }));
+  }
+
+  // Continuous soft engine drone; volume/pitch rise with movement input.
+  let engineOsc = null;
+  let engineGain = null;
+  function updateEngine(moveMag) {
+    const c = ensureCtx();
+    if (!c) return;
+    if (!engineOsc) {
+      engineOsc = c.createOscillator();
+      engineOsc.type = 'sawtooth';
+      engineOsc.frequency.value = 50;
+      engineGain = c.createGain();
+      engineGain.gain.value = 0.0001;
+      const filter = c.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 220;
+      engineOsc.connect(filter);
+      filter.connect(engineGain);
+      engineGain.connect(master);
+      engineOsc.start();
+    }
+    const clamped = Math.min(1, Math.max(0, moveMag));
+    engineGain.gain.setTargetAtTime(0.02 + clamped * 0.05, c.currentTime, 0.15);
+    engineOsc.frequency.setTargetAtTime(50 + clamped * 30, c.currentTime, 0.15);
+  }
+
+  function stopEngine() {
+    if (engineOsc) {
+      try {
+        engineOsc.stop();
+      } catch (e) {
+        /* already stopped */
+      }
+      engineOsc.disconnect();
+      engineGain.disconnect();
+      engineOsc = null;
+      engineGain = null;
+    }
+  }
+
+  return { resume, setMuted, isMuted, shot, hit, blocked, explosion, pickup, click, lowHealthBeep, stageClear, stageFailed, updateEngine, stopEngine };
+})();
+
+['pointerdown', 'keydown', 'touchstart'].forEach((evt) => {
+  window.addEventListener(evt, () => Sound.resume(), { once: true, passive: true });
+});
+
+function distVolMult(x, z, maxDist = 55) {
+  const self = entities.get(selfId);
+  if (!self) return 1;
+  const d = Math.hypot(x - self.render.x, z - self.render.z);
+  return Math.max(0, 1 - d / maxDist);
+}
+
 // ---------- Profile / progression (localStorage) ----------
 const PROFILE_KEY = 'tank3d_profile_v1';
 
@@ -152,6 +354,9 @@ const campaignStageNameEl = document.getElementById('campaignStageName');
 const campaignEnemiesEl = document.getElementById('campaignEnemies');
 const hudCurrencyValueEl = document.getElementById('hudCurrencyValue');
 const menuLeaveBtnEl = document.getElementById('menuLeaveBtn');
+const muteBtnEl = document.getElementById('muteBtn');
+const minimapEl = document.getElementById('minimap');
+const minimapCtx = minimapEl.getContext('2d');
 const healthBar = document.getElementById('healthBar');
 const healthLabel = document.getElementById('healthLabel');
 const reloadBar = document.getElementById('reloadBar');
@@ -606,6 +811,7 @@ const pickupMeshes = new Map(); // id -> { group, core, labelEl }
 let latestPickupData = [];
 
 let localDeathStart = 0;
+let lastLowHpBeep = 0;
 let lockedTargetId = null;
 
 function angleLerp(a, b, t) {
@@ -695,6 +901,7 @@ function resetGameState() {
   keys.clear();
   firing = false;
   if (document.pointerLockElement === canvas) document.exitPointerLock();
+  Sound.stopEngine();
 }
 
 function addKillfeedEntry(html) {
@@ -859,6 +1066,23 @@ btnStageMenuEl.addEventListener('click', leaveRoomAndGoMenu);
 btnStageRetryEl.addEventListener('click', () => leaveAndRejoinCampaign(latestStageStatus.stageId));
 btnStageNextEl.addEventListener('click', () => leaveAndRejoinCampaign(latestStageStatus.stageId + 1));
 
+function refreshMuteBtn() {
+  muteBtnEl.textContent = Sound.isMuted() ? '🔇' : '🔊';
+}
+muteBtnEl.addEventListener('click', () => {
+  Sound.resume();
+  Sound.setMuted(!Sound.isMuted());
+  refreshMuteBtn();
+});
+refreshMuteBtn();
+
+// Generic soft click blip for any HUD/menu button, skipping the touch
+// fire/lock buttons (held rapidly, would spam the sound).
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('button');
+  if (btn && btn.id !== 'touchFireBtn' && btn.id !== 'touchLockBtn') Sound.click();
+});
+
 socket.on('connect_error', () => {
   loginStatusEl.textContent = 'Không thể kết nối tới máy chủ. Vui lòng thử lại.';
 });
@@ -969,8 +1193,12 @@ socket.on('state', (msg) => {
       if (victim && ev.amount > 0) {
         const kind = ev.victimId === selfId ? 'taken' : attackerId === selfId ? 'dealt' : 'neutral';
         spawnCombatNumber(victim.target.x, victim.target.z, '-' + ev.amount, kind);
+        const mult = ev.victimId === selfId ? 1 : distVolMult(victim.target.x, victim.target.z);
+        if (mult > 0.03) Sound.hit(mult);
       } else if (victim && ev.blocked) {
         spawnCombatNumber(victim.target.x, victim.target.z, 'Miễn nhiễm', 'blocked');
+        const mult = ev.victimId === selfId ? 1 : distVolMult(victim.target.x, victim.target.z);
+        if (mult > 0.03) Sound.blocked(mult);
       }
     }
     if (ev.type === 'kill') {
@@ -979,10 +1207,14 @@ socket.on('state', (msg) => {
       const killerLabel = ev.killerId === selfId ? 'Bạn' : escapeHtml(ev.killerName);
       const victimLabel = ev.victimId === selfId ? 'Bạn' : escapeHtml(ev.victimName);
       addKillfeedEntry(`<span class="k">${killerLabel}</span> đã hạ <span class="v">${victimLabel}</span>`);
-      if (ev.victimId === selfId) localDeathStart = performance.now();
+      const isSelfDeath = ev.victimId === selfId;
+      const explMult = isSelfDeath ? 1 : victim ? distVolMult(victim.target.x, victim.target.z) : 0.3;
+      Sound.explosion(Math.max(explMult, 0.15), isSelfDeath);
+      if (isSelfDeath) localDeathStart = performance.now();
     } else if (ev.type === 'pickup') {
       const who = ev.playerId === selfId ? 'Bạn' : escapeHtml(ev.playerName);
       addKillfeedEntry(`${who} nhặt được <span class="k">${escapeHtml(ev.itemLabel)}</span>`);
+      if (ev.playerId === selfId) Sound.pickup();
       if (ev.healAmount > 0) {
         const healer = entities.get(ev.playerId);
         if (healer) spawnCombatNumber(healer.target.x, healer.target.z, '+' + ev.healAmount, 'heal');
@@ -1009,10 +1241,12 @@ function showStageResult(status) {
     stageResultTitleEl.textContent = '🎉 Hoàn thành!';
     stageResultSubEl.textContent = `${status.stageName} — Nhận +${status.reward} Xu`;
     btnStageNextEl.classList.toggle('hidden', !STAGES_META.length || status.stageId >= STAGES_META.length);
+    Sound.stageClear();
   } else {
     stageResultTitleEl.textContent = '💥 Thất bại';
     stageResultSubEl.textContent = `${status.stageName} — Thử lại nào!`;
     btnStageNextEl.classList.add('hidden');
+    Sound.stageFailed();
   }
   stageResultOverlayEl.classList.remove('hidden');
 }
@@ -1059,6 +1293,7 @@ if (!isTouchDevice) {
     // the locked element, so a real click on this button would never arrive —
     // hide it during aiming and reveal it once Esc releases the lock.
     menuLeaveBtnEl.classList.toggle('hidden', pointerLocked);
+    muteBtnEl.classList.toggle('hidden', pointerLocked);
   });
 
   document.addEventListener('mousemove', (e) => {
@@ -1279,6 +1514,7 @@ function clamp(v, min, max) {
 let lastFireTimeLocal = 0;
 let fireCooldownLocal = 550;
 let lastTime = performance.now();
+let lastMoveMag = 0;
 
 function currentLoadoutStats() {
   const u = profile.upgrades;
@@ -1322,7 +1558,10 @@ setInterval(sendInput, 50); // 20 Hz, matches server tick rate
 
 function updateLocalPrediction(dt) {
   const self = entities.get(selfId);
-  if (!self || !self.alive) return;
+  if (!self || !self.alive) {
+    lastMoveMag = 0;
+    return;
+  }
 
   const stats = currentLoadoutStats();
   fireCooldownLocal = stats.fireCooldown;
@@ -1334,6 +1573,7 @@ function updateLocalPrediction(dt) {
   const move = computeMoveVector();
   const moveForward = move.f;
   const moveRight = move.r;
+  lastMoveMag = Math.hypot(moveForward, moveRight);
 
   let x = self.render.x;
   let z = self.render.z;
@@ -1415,6 +1655,12 @@ function syncBullets() {
       bulletMeshes.set(b.id, mesh);
       r = { x: b.x, z: b.z };
       bulletRender.set(b.id, r);
+      // Self shots already get instant feedback from the local fire-cooldown
+      // timer below — only sound freshly-seen bullets from others here.
+      if (b.ownerId !== selfId) {
+        const mult = distVolMult(b.x, b.z);
+        if (mult > 0.03) Sound.shot(b.kind, mult);
+      }
     }
     r.x += (b.x - r.x) * 0.5;
     r.z += (b.z - r.z) * 0.5;
@@ -1498,6 +1744,14 @@ function updateHud() {
   healthBar.style.width = hpPct + '%';
   healthLabel.textContent = `${Math.max(0, Math.round(self.hp))} / ${self.maxHp}`;
 
+  if (self.alive && hpPct > 0 && hpPct < 25) {
+    const nowBeep = performance.now();
+    if (nowBeep - lastLowHpBeep > 900) {
+      Sound.lowHealthBeep();
+      lastLowHpBeep = nowBeep;
+    }
+  }
+
   const sinceFire = Date.now() - lastFireTimeLocal;
   const reloadPct = Math.min(100, (sinceFire / fireCooldownLocal) * 100);
   reloadBar.style.width = reloadPct + '%';
@@ -1525,10 +1779,75 @@ function updateHud() {
   }
 }
 
+// ---------- Minimap ----------
+function updateMinimap() {
+  const size = minimapEl.width;
+  const ctx = minimapCtx;
+  ctx.clearRect(0, 0, size, size);
+  ctx.fillStyle = 'rgba(8,12,18,0.55)';
+  ctx.fillRect(0, 0, size, size);
+
+  const half = arenaHalfSize || 60;
+  const scale = size / (half * 2);
+  // World +z is "forward" at bodyRot 0 (see server/Game.js), so it maps to
+  // up on the minimap; world +x maps to right, matching the facing-arrow math below.
+  const toMap = (x, z) => ({ px: (x + half) * scale, py: (half - z) * scale });
+
+  ctx.fillStyle = 'rgba(150,160,175,0.6)';
+  for (const o of obstacles) {
+    const p = toMap(o.x - o.w / 2, o.z + o.d / 2);
+    ctx.fillRect(p.px, p.py, o.w * scale, o.d * scale);
+  }
+
+  for (const pk of latestPickupData) {
+    const meta = PICKUP_META[pk.kind];
+    if (!meta) continue;
+    const p = toMap(pk.x, pk.z);
+    ctx.fillStyle = '#' + meta.color.toString(16).padStart(6, '0');
+    ctx.beginPath();
+    ctx.arc(p.px, p.py, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  for (const [id, e] of entities) {
+    if (!e.alive) continue;
+    const p = toMap(e.render.x, e.render.z);
+    if (id === selfId) {
+      // Arrow drawn pointing "up" (world +z, bodyRot 0), then rotated by
+      // bodyRot — ctx.rotate is clockwise, matching how forward swings from
+      // +z toward +x as bodyRot increases, same as the world-space math.
+      ctx.save();
+      ctx.translate(p.px, p.py);
+      ctx.rotate(e.render.bodyRot);
+      ctx.fillStyle = '#ffb020';
+      ctx.beginPath();
+      ctx.moveTo(0, -6);
+      ctx.lineTo(-4.2, 4.5);
+      ctx.lineTo(4.2, 4.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    } else {
+      ctx.fillStyle = e.isBot ? '#ff8a8a' : '#e8edf4';
+      ctx.beginPath();
+      ctx.arc(p.px, p.py, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, size - 1, size - 1);
+}
+
 setInterval(() => {
   if (firing) {
     const now = Date.now();
-    if (now - lastFireTimeLocal >= fireCooldownLocal) lastFireTimeLocal = now;
+    if (now - lastFireTimeLocal >= fireCooldownLocal) {
+      lastFireTimeLocal = now;
+      const self = entities.get(selfId);
+      if (self && self.alive) Sound.shot(self.weaponType || 'normal', 1);
+    }
   }
 }, 30);
 
@@ -1551,6 +1870,8 @@ function animate() {
     updateCamera();
     updateHud();
     updateLockUI();
+    updateMinimap();
+    Sound.updateEngine(lastMoveMag);
   }
 
   renderer.render(scene, camera);

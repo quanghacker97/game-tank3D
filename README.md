@@ -50,6 +50,11 @@ Tối đa 4 vật phẩm xuất hiện ngẫu nhiên cùng lúc tại các đi�
 
 Vũ khí đặc biệt có tác dụng trong 25 giây rồi tự quay lại pháo thường; các buff/vũ khí đang có hiệu lực hiển thị thành huy hiệu ở góc dưới trái màn hình. Chết thì mất hết buff đang có khi hồi sinh.
 
+## Âm thanh & Minimap
+
+- **Âm thanh**: toàn bộ hiệu ứng âm thanh (tiếng bắn theo từng loại vũ khí, trúng đạn, nổ/tử vong, nhặt vật phẩm, tiếng động cơ khi di chuyển, cảnh báo khi máu thấp, tiếng click nút bấm, thắng/thua ải) được **tổng hợp trực tiếp bằng Web Audio API** ngay trong trình duyệt — không cần tải file âm thanh nào, load trang là có ngay. Âm lượng giảm dần theo khoảng cách tới xe của bạn để tạo cảm giác không gian. Bấm nút 🔊 ở góc trên phải để tắt/bật âm thanh (lưu lựa chọn vào trình duyệt cho lần chơi sau); trình duyệt yêu cầu một thao tác chạm/click đầu tiên mới cho phép phát âm thanh, việc này diễn ra tự động ngay khi bạn bấm nút bất kỳ để vào trận.
+- **Minimap**: bản đồ thu nhỏ ở góc dưới phải màn hình, hiển thị toàn cảnh bản đồ nhìn từ trên xuống — vị trí và hướng xe của bạn (mũi tên vàng), vị trí đối thủ/xe địch AI (chấm trắng/đỏ), vật cản (hình chữ nhật xám) và vật phẩm đang xuất hiện (chấm màu theo loại), cập nhật liên tục theo thời gian thực.
+
 ## Chế độ chơi
 
 - **⚔️ Đấu trường (PvP)**: nhiều người chơi đấu tự do trong cùng một phòng, hạ gục nhau để tính điểm, hồi sinh sau khi chết. Không có kẻ địch AI, không kiếm được Xu ở chế độ này.

@@ -358,6 +358,30 @@ button {
 }
 #menuLeaveBtn:hover { background: rgba(0,0,0,0.6); }
 
+#muteBtn {
+  position: absolute;
+  top: 14px;
+  right: 112px;
+  pointer-events: auto;
+  padding: 7px 10px;
+  border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 6px;
+  background: rgba(0,0,0,0.4);
+  color: #e8edf4;
+  font-size: 14px;
+}
+#muteBtn:hover { background: rgba(0,0,0,0.6); }
+
+#minimap {
+  position: absolute;
+  right: 16px;
+  bottom: 20px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(8,12,18,0.4);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+}
+
 #campaignBar {
   position: absolute;
   top: 54px;
@@ -606,6 +630,9 @@ body.touch-mode #healthLabel { bottom: 194px; left: 16px; }
 body.touch-mode #reloadWrap { bottom: 156px; left: 16px; }
 body.touch-mode #buffRow { bottom: 220px; left: 16px; }
 body.touch-mode #helpText { display: none; }
+/* Fire/lock buttons sit bottom-right (82px tall + 20px gap); lift the
+   minimap clear above them so touch taps don't land on it. */
+body.touch-mode #minimap { bottom: 130px; width: 110px; height: 110px; }
 
 @media (max-width: 640px) {
   #stageGrid { grid-template-columns: repeat(2, 1fr); }
@@ -613,6 +640,7 @@ body.touch-mode #helpText { display: none; }
   #healthWrap, #reloadWrap { width: 160px; }
   #killfeed { width: 50vw; }
   #scoreboard { min-width: 130px; max-width: 42vw; font-size: 10.5px; }
+  #minimap { width: 110px; height: 110px; }
   /* The top-left scoreboard can run tall in campaign (a few bot rows), so
      push the centered currency/stage pills below it instead of overlapping. */
   #campaignBar { top: 100px; }

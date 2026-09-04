@@ -24,6 +24,16 @@ Mở `http://localhost:3000` trên nhiều tab/máy khác nhau (cùng mạng, ho
 
 Hạ gục người chơi khác để ghi điểm; bạn sẽ hồi sinh sau 3 giây ở một điểm spawn ngẫu nhiên. Bảng xếp hạng (góc trên trái) và kill-feed (góc trên phải) cập nhật theo thời gian thực.
 
+- **Tab**: khoá mục tiêu gần nhất (hỗ trợ ngắm) — tháp pháo + camera sẽ tự bám theo mục tiêu đang khoá (giới hạn tốc độ xoay, không phải auto-aim tuyệt đối); nhấn Tab lần nữa để mở khoá.
+
+## Chế độ chơi
+
+- **⚔️ Đấu trường (PvP)**: nhiều người chơi đấu tự do trong cùng một phòng, hạ gục nhau để tính điểm, hồi sinh sau khi chết. Không có kẻ địch AI, không kiếm được Xu ở chế độ này.
+- **🎯 Chiến dịch (Vượt ải, PvE)**: chơi một mình, đấu với xe tăng điều khiển bởi AI theo từng ải (8 ải, độ khó tăng dần). Hạ hết địch trong ải để **nhận thưởng Xu** và mở khoá ải tiếp theo; nếu xe của bạn bị hạ, ải thất bại và có thể chơi lại. AI địch sẽ đuổi theo, né chướng ngại vật cơ bản, và ngắm bắn với độ chính xác tuỳ độ khó (Dễ/Vừa/Khó).
+- **🔧 Gara nâng cấp**: dùng Xu kiếm được từ Chiến dịch để nâng cấp 4 chỉ số của xe tăng (mỗi chỉ số 5 cấp): **Sức mạnh** (sát thương đạn), **Phòng thủ** (máu tối đa), **Nhanh nhẹn** (tốc độ di chuyển + xoay thân), **Tốc độ bắn** (giảm thời gian hồi chiêu). Trang bị đã nâng cấp áp dụng ở cả hai chế độ.
+
+Tiến trình (tên, Xu, cấp trang bị, ải đã mở khoá) được lưu trong `localStorage` của trình duyệt — không cần đăng nhập, nhưng cũng không đồng bộ giữa các thiết bị/trình duyệt khác nhau, và không có xác thực server nên đây chỉ là kinh tế trong game mang tính giải trí (không phải tiền thật, không chống gian lận tuyệt đối cho PvP).
+
 ## Deploy để chơi thử online (Render)
 
 Game này cần một server Node.js chạy **liên tục** (vòng lặp game 20 tick/giây + kết nối WebSocket giữ trạng thái người chơi trong bộ nhớ), nên **không deploy được lên Vercel** — Vercel chỉ chạy hàm serverless ngắn hạn, không giữ được state hay giữ kết nối WebSocket lâu dài. Repo này đã có sẵn `render.yaml` để deploy lên [Render](https://render.com) (có free tier, hỗ trợ WebSocket tốt):
@@ -41,19 +51,22 @@ Lưu ý plan free của Render sẽ "ngủ" sau ~15 phút không có traffic, l�
 
 ```
 server/
-  index.js       Express + Socket.IO wiring, game loop (20 Hz)
-  Game.js        Logic mô phỏng: di chuyển, va chạm, đạn, sát thương, hồi sinh
-  constants.js   Thông số cân bằng game + bản đồ (dùng chung server/client)
+  index.js        Express + Socket.IO wiring, route join/input/leaveRoom, game loop (20 Hz)
+  RoomManager.js   Quản lý phòng đấu trường (1 phòng chung) + phòng chiến dịch (1 phòng riêng/người chơi)
+  Game.js          Logic mô phỏng: di chuyển, va chạm, đạn, sát thương, hồi sinh, AI bot, thắng/thua ải
+  constants.js     Thông số cân bằng game, bản đồ, bảng nâng cấp, chỉ số bot, danh sách ải
 public/
-  index.html     Khung trang + màn hình đăng nhập
-  client.js      Render Three.js, input, dự đoán chuyển động phía client, HUD
-  style.css      Giao diện HUD
-  vendor/        Bản build Three.js được vendor sẵn (không cần tải từ CDN)
+  index.html       Khung trang: màn hình tên/menu/chọn ải/gara + HUD trong trận
+  client.js        Render Three.js, input, dự đoán chuyển động, khoá mục tiêu, quản lý tiến trình (localStorage)
+  style.css        Giao diện menu + HUD
+  vendor/          Bản build Three.js được vendor sẵn (không cần tải từ CDN)
 ```
 
 ## Kiến trúc mạng
 
-Server giữ trạng thái gốc (vị trí, máu, đạn...) và phát broadcast 20 lần/giây qua Socket.IO. Client tự dự đoán chuyển động của xe tăng của mình để cảm giác mượt, đồng thời liên tục hiệu chỉnh nhẹ theo dữ liệu server để tránh lệch trạng thái; xe tăng của người chơi khác được nội suy (interpolate) mượt giữa các gói tin.
+Server giữ trạng thái gốc (vị trí, máu, đạn...) và phát broadcast 20 lần/giây qua Socket.IO, theo từng "phòng" (Socket.IO room): một phòng Đấu trường dùng chung cho mọi người chơi PvP, và mỗi lượt chơi Chiến dịch tạo một phòng riêng (chỉ người chơi đó + các bot). Client tự dự đoán chuyển động của xe tăng của mình để cảm giác mượt, đồng thời liên tục hiệu chỉnh nhẹ theo dữ liệu server để tránh lệch trạng thái; xe tăng của người chơi/bot khác được nội suy (interpolate) mượt giữa các gói tin.
+
+Chỉ số trang bị (sát thương, máu, tốc độ, tốc độ bắn) được server tính toán từ cấp nâng cấp (0-5) do client gửi lên khi vào trận — server luôn giới hạn (clamp) cấp trong khoảng hợp lệ, nên client có gian lận cũng chỉ đạt tối đa bằng một người chơi nâng cấp hết mức hợp lệ, không thể vượt trần.
 
 ## Vì sao không dùng GDevelop?
 

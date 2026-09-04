@@ -11,28 +11,70 @@
   <canvas id="scene"></canvas>
 
   <div id="hud">
+    <div id="campaignBar" class="hidden">
+      <span id="campaignStageName"></span> — Còn <span id="campaignEnemies">0</span> kẻ địch
+    </div>
+
+    <div id="hudCurrency">💰 <span id="hudCurrencyValue">0</span></div>
+    <button id="menuLeaveBtn" title="Về menu">☰ Menu</button>
+
     <div id="healthWrap">
       <div id="healthBar"></div>
       <div id="healthLabel">100 / 100</div>
     </div>
     <div id="reloadWrap"><div id="reloadBar"></div></div>
     <div id="crosshair"></div>
+    <div id="lockLabel" class="hidden"></div>
     <div id="killfeed"></div>
     <div id="scoreboard"></div>
-    <div id="helpText">WASD: di chuyển &nbsp;|&nbsp; Chuột: ngắm &nbsp;|&nbsp; Click/Space: bắn &nbsp;|&nbsp; Esc: thoát ngắm</div>
+    <div id="helpText">WASD: di chuyển &nbsp;|&nbsp; Chuột: ngắm &nbsp;|&nbsp; Click/Space: bắn &nbsp;|&nbsp; Tab: khoá mục tiêu &nbsp;|&nbsp; Esc: thoát ngắm</div>
     <div id="deathBanner" class="hidden">
       <div id="deathTitle">Bạn đã bị hạ!</div>
       <div id="deathSub">Hồi sinh sau <span id="respawnCount">3</span>s…</div>
     </div>
+
+    <div id="stageResultOverlay" class="hidden">
+      <div id="stageResultBox">
+        <div id="stageResultTitle"></div>
+        <div id="stageResultSub"></div>
+        <div id="stageResultButtons">
+          <button id="btnStageNext" class="hidden">Ải tiếp theo</button>
+          <button id="btnStageRetry">Chơi lại</button>
+          <button id="btnStageMenu">Về menu</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="loginOverlay">
-    <div id="loginBox">
+    <div id="panelName" class="panel">
       <h1>Tank3D Arena</h1>
       <p>Bắn tank 3D nhiều người chơi online</p>
       <input id="nameInput" maxlength="16" placeholder="Nhập tên của bạn" autocomplete="off" />
-      <button id="playBtn">Vào trận</button>
+      <button id="continueBtn">Tiếp tục</button>
       <div id="loginStatus"></div>
+    </div>
+
+    <div id="panelMenu" class="panel hidden">
+      <h1>Tank3D Arena</h1>
+      <div class="currencyBadge">💰 <span id="menuCurrency">0</span> Xu</div>
+      <button class="menuBtn" id="btnArena">⚔️ Đấu trường (PvP)</button>
+      <button class="menuBtn" id="btnCampaign">🎯 Chiến dịch (Vượt ải)</button>
+      <button class="menuBtn" id="btnGarage">🔧 Gara nâng cấp</button>
+      <div id="menuHint">Xin chào, <span id="menuName"></span> · <a href="#" id="changeNameLink">đổi tên</a></div>
+    </div>
+
+    <div id="panelStages" class="panel wide hidden">
+      <h1>Chiến dịch — chọn ải</h1>
+      <div id="stageGrid"></div>
+      <button class="backBtn" id="stagesBack">← Quay lại</button>
+    </div>
+
+    <div id="panelGarage" class="panel wide hidden">
+      <h1>Gara nâng cấp</h1>
+      <div class="currencyBadge">💰 <span id="garageCurrency">0</span> Xu</div>
+      <div id="upgradeList"></div>
+      <button class="backBtn" id="garageBack">← Quay lại</button>
     </div>
   </div>
 

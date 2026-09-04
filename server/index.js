@@ -5,8 +5,8 @@ const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 
-const { Game } = require('./Game');
-const { TICK_MS, ARENA_HALF_SIZE, OBSTACLES, TANK_MAX_HP } = require('./constants');
+const RoomManager = require('./RoomManager');
+const { TICK_MS, ARENA_HALF_SIZE, OBSTACLES, STAGES } = require('./constants');
 
 const PORT = process.env.PORT || 3000;
 
@@ -18,43 +18,103 @@ const io = new Server(httpServer, {
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-const game = new Game();
+app.get('/api/stages', (req, res) => {
+  res.json(STAGES.map((s) => ({ id: s.id, name: s.name, botCount: s.bots.length, reward: s.reward })));
+});
+
+function cleanupSocketRoom(socket) {
+  const { roomId, mode } = socket.data;
+  if (!roomId) return;
+
+  const game = RoomManager.getRoom(roomId);
+  if (game) {
+    game.removePlayer(socket.id);
+    if (mode === 'arena') io.to(roomId).emit('playerLeft', { id: socket.id });
+  }
+  if (mode === 'campaign') RoomManager.destroyRoom(roomId);
+
+  socket.leave(roomId);
+  socket.data.roomId = null;
+  socket.data.mode = null;
+}
 
 io.on('connection', (socket) => {
-  let joined = false;
+  socket.data.roomId = null;
+  socket.data.mode = null;
 
   socket.on('join', (data) => {
-    if (joined) return;
-    joined = true;
-    const name = data && typeof data.name === 'string' ? data.name : 'Tank';
-    const player = game.addPlayer(socket.id, name);
+    if (socket.data.roomId) return; // already in a room
 
-    socket.emit('init', {
-      selfId: socket.id,
-      arenaHalfSize: ARENA_HALF_SIZE,
-      obstacles: OBSTACLES,
-      tankMaxHp: TANK_MAX_HP,
-      snapshot: game.snapshot(),
-    });
-    socket.broadcast.emit('playerJoined', { id: player.id, name: player.name });
+    const name = data && typeof data.name === 'string' ? data.name : 'Tank';
+    const loadout = (data && data.loadout) || {};
+    const mode = data && data.mode === 'campaign' ? 'campaign' : 'arena';
+
+    if (mode === 'campaign') {
+      const stageNumber = Number(data && data.stage);
+      const created = RoomManager.createCampaignRoom(socket.id, stageNumber);
+      if (!created) {
+        socket.emit('joinError', { message: 'Ải không hợp lệ.' });
+        return;
+      }
+      const { roomId, game } = created;
+      game.addPlayer(socket.id, name, loadout);
+      socket.join(roomId);
+      socket.data.roomId = roomId;
+      socket.data.mode = 'campaign';
+
+      socket.emit('init', {
+        selfId: socket.id,
+        mode: 'campaign',
+        arenaHalfSize: ARENA_HALF_SIZE,
+        obstacles: OBSTACLES,
+        snapshot: game.snapshot(),
+        stageStatus: game.getStageStatus(),
+      });
+    } else {
+      const game = RoomManager.getArenaGame();
+      const player = game.addPlayer(socket.id, name, loadout);
+      socket.join(RoomManager.ARENA_ROOM_ID);
+      socket.data.roomId = RoomManager.ARENA_ROOM_ID;
+      socket.data.mode = 'arena';
+
+      socket.emit('init', {
+        selfId: socket.id,
+        mode: 'arena',
+        arenaHalfSize: ARENA_HALF_SIZE,
+        obstacles: OBSTACLES,
+        snapshot: game.snapshot(),
+      });
+      socket.to(RoomManager.ARENA_ROOM_ID).emit('playerJoined', { id: player.id, name: player.name });
+    }
   });
 
   socket.on('input', (input) => {
-    if (!joined) return;
-    game.setInput(socket.id, input);
+    const roomId = socket.data.roomId;
+    if (!roomId) return;
+    const game = RoomManager.getRoom(roomId);
+    if (game) game.setInput(socket.id, input);
+  });
+
+  socket.on('leaveRoom', () => {
+    cleanupSocketRoom(socket);
   });
 
   socket.on('disconnect', () => {
-    if (!joined) return;
-    game.removePlayer(socket.id);
-    io.emit('playerLeft', { id: socket.id });
+    cleanupSocketRoom(socket);
   });
 });
 
 setInterval(() => {
-  game.tick();
-  const events = game.flushEvents();
-  io.emit('state', { t: Date.now(), snapshot: game.snapshot(), events });
+  for (const [roomId, game] of RoomManager.allRooms()) {
+    game.tick();
+    const events = game.flushEvents();
+    io.to(roomId).emit('state', {
+      t: Date.now(),
+      snapshot: game.snapshot(),
+      events,
+      stageStatus: game.getStageStatus(),
+    });
+  }
 }, TICK_MS);
 
 httpServer.listen(PORT, () => {

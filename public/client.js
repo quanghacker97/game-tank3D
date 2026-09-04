@@ -2,8 +2,6 @@
 
 // Must mirror server/constants.js so local prediction matches the
 // authoritative simulation closely enough that server corrections stay tiny.
-const MOVE_SPEED = 14;
-const TURN_SPEED = 2.4;
 const TANK_RADIUS = 2.3;
 const RESPAWN_DELAY_MS = 3000;
 const MOUSE_SENSITIVITY = 0.0022;
@@ -11,21 +9,118 @@ const PITCH_MIN = 0.05;
 const PITCH_MAX = 0.9;
 const CAM_DIST = 11;
 const CAM_BASE_HEIGHT = 3;
+const LOCK_TURN_RATE = 3.0; // rad/sec turret tracking speed while target-locked
+const LOCK_MAX_RANGE = 90;
+
+const MAX_UPGRADE_LEVEL = 5;
+const UPGRADES = {
+  power: [25, 29, 33, 37, 41, 45],
+  defense: [100, 116, 132, 148, 164, 180],
+  agilityMove: [14, 15.2, 16.4, 17.6, 18.8, 20],
+  agilityTurn: [2.4, 2.6, 2.8, 3.0, 3.2, 3.4],
+  rate: [550, 510, 470, 430, 390, 350],
+};
+const UPGRADE_COST = [50, 120, 220, 360, 550];
+const UPGRADE_TRACKS = [
+  { key: 'power', icon: '⚔️', label: 'Sức mạnh', fmt: (lv) => `${UPGRADES.power[lv]} sát thương` },
+  { key: 'defense', icon: '🛡️', label: 'Phòng thủ', fmt: (lv) => `${UPGRADES.defense[lv]} máu` },
+  { key: 'agility', icon: '💨', label: 'Nhanh nhẹn', fmt: (lv) => `${UPGRADES.agilityMove[lv].toFixed(1)} m/s` },
+  { key: 'rate', icon: '🔫', label: 'Tốc độ bắn', fmt: (lv) => `${(1000 / UPGRADES.rate[lv]).toFixed(2)} phát/s` },
+];
+
+// ---------- Profile / progression (localStorage) ----------
+const PROFILE_KEY = 'tank3d_profile_v1';
+
+function clampLevel(v) {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.max(0, Math.min(MAX_UPGRADE_LEVEL, n)) : 0;
+}
+
+function loadProfile() {
+  try {
+    const raw = localStorage.getItem(PROFILE_KEY);
+    if (raw) {
+      const p = JSON.parse(raw);
+      return {
+        name: typeof p.name === 'string' ? p.name.slice(0, 16) : '',
+        currency: Number.isFinite(p.currency) ? Math.max(0, p.currency) : 0,
+        upgrades: {
+          power: clampLevel(p.upgrades && p.upgrades.power),
+          defense: clampLevel(p.upgrades && p.upgrades.defense),
+          agility: clampLevel(p.upgrades && p.upgrades.agility),
+          rate: clampLevel(p.upgrades && p.upgrades.rate),
+        },
+        unlockedStage: Number.isFinite(p.unlockedStage) ? Math.max(1, p.unlockedStage) : 1,
+      };
+    }
+  } catch (e) {
+    /* ignore corrupt storage */
+  }
+  return { name: '', currency: 0, upgrades: { power: 0, defense: 0, agility: 0, rate: 0 }, unlockedStage: 1 };
+}
+
+function saveProfile() {
+  try {
+    localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  } catch (e) {
+    /* storage unavailable (private mode, quota) — progress just won't persist */
+  }
+}
+
+const profile = loadProfile();
+let STAGES_META = [];
+fetch('/api/stages')
+  .then((r) => r.json())
+  .then((data) => {
+    STAGES_META = Array.isArray(data) ? data : [];
+    renderStages();
+  })
+  .catch(() => {});
 
 // ---------- DOM ----------
 const canvas = document.getElementById('scene');
 const loginOverlay = document.getElementById('loginOverlay');
-const nameInput = document.getElementById('nameInput');
-const playBtn = document.getElementById('playBtn');
-const loginStatus = document.getElementById('loginStatus');
+const elPanelName = document.getElementById('panelName');
+const elPanelMenu = document.getElementById('panelMenu');
+const elPanelStages = document.getElementById('panelStages');
+const elPanelGarage = document.getElementById('panelGarage');
+
+const nameInputEl = document.getElementById('nameInput');
+const continueBtnEl = document.getElementById('continueBtn');
+const loginStatusEl = document.getElementById('loginStatus');
+const menuCurrencyEl = document.getElementById('menuCurrency');
+const menuNameEl = document.getElementById('menuName');
+const changeNameLinkEl = document.getElementById('changeNameLink');
+const btnArenaEl = document.getElementById('btnArena');
+const btnCampaignEl = document.getElementById('btnCampaign');
+const btnGarageEl = document.getElementById('btnGarage');
+const stageGridEl = document.getElementById('stageGrid');
+const stagesBackEl = document.getElementById('stagesBack');
+const garageBackEl = document.getElementById('garageBack');
+const garageCurrencyEl = document.getElementById('garageCurrency');
+const upgradeListEl = document.getElementById('upgradeList');
+
 const hud = document.getElementById('hud');
+const campaignBarEl = document.getElementById('campaignBar');
+const campaignStageNameEl = document.getElementById('campaignStageName');
+const campaignEnemiesEl = document.getElementById('campaignEnemies');
+const hudCurrencyValueEl = document.getElementById('hudCurrencyValue');
+const menuLeaveBtnEl = document.getElementById('menuLeaveBtn');
 const healthBar = document.getElementById('healthBar');
 const healthLabel = document.getElementById('healthLabel');
 const reloadBar = document.getElementById('reloadBar');
+const crosshairEl = document.getElementById('crosshair');
+const lockLabelEl = document.getElementById('lockLabel');
 const killfeedEl = document.getElementById('killfeed');
 const scoreboardEl = document.getElementById('scoreboard');
 const deathBanner = document.getElementById('deathBanner');
 const respawnCountEl = document.getElementById('respawnCount');
+const stageResultOverlayEl = document.getElementById('stageResultOverlay');
+const stageResultTitleEl = document.getElementById('stageResultTitle');
+const stageResultSubEl = document.getElementById('stageResultSub');
+const btnStageNextEl = document.getElementById('btnStageNext');
+const btnStageRetryEl = document.getElementById('btnStageRetry');
+const btnStageMenuEl = document.getElementById('btnStageMenu');
 
 // ---------- Three.js setup ----------
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -46,7 +141,6 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// Lights
 const hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 0.9);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 1.1);
@@ -62,6 +156,7 @@ scene.add(sun);
 
 let arenaHalfSize = 60;
 let obstacles = [];
+let worldBuilt = false;
 
 function buildGround() {
   const geo = new THREE.PlaneGeometry(arenaHalfSize * 2 + 40, arenaHalfSize * 2 + 40, 20, 20);
@@ -158,7 +253,6 @@ function createBulletMesh() {
   return mesh;
 }
 
-// Simple expanding-fade burst used for kill feedback.
 const bursts = [];
 function spawnBurst(x, z) {
   const geo = new THREE.SphereGeometry(1, 10, 10);
@@ -187,18 +281,29 @@ function updateBursts(dt) {
 const socket = io();
 
 let selfId = null;
-let tankMaxHp = 100;
+let mode = null; // 'arena' | 'campaign'
+let latestStageStatus = null;
+let stageResultShown = false;
 
-// entities: id -> { render, target, mesh:{...}, nameTagEl, hpFillEl, color, alive }
-const entities = new Map();
-const bulletMeshes = new Map(); // bulletId -> mesh
+const entities = new Map(); // id -> { mesh, nameTagEl, hpFillEl, render, target, alive, name, isBot, maxHp, hp, kills, deaths }
+const bulletMeshes = new Map();
+const bulletRender = new Map();
+let latestBulletData = [];
 
 let localDeathStart = 0;
+let lockedTargetId = null;
 
 function angleLerp(a, b, t) {
   let diff = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
   if (diff < -Math.PI) diff += Math.PI * 2;
   return a + diff * t;
+}
+
+function angleLerpCapped(a, b, maxStep) {
+  let diff = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (diff < -Math.PI) diff += Math.PI * 2;
+  const clamped = Math.max(-maxStep, Math.min(maxStep, diff));
+  return a + clamped;
 }
 
 function ensureEntity(id, color) {
@@ -225,6 +330,9 @@ function ensureEntity(id, color) {
     target: { x: 0, z: 0, bodyRot: 0, turretRot: 0 },
     alive: true,
     name: '',
+    isBot: false,
+    maxHp: 100,
+    hp: 100,
   };
   entities.set(id, e);
   return e;
@@ -238,6 +346,24 @@ function removeEntity(id) {
   entities.delete(id);
 }
 
+function resetGameState() {
+  for (const id of Array.from(entities.keys())) removeEntity(id);
+  for (const mesh of bulletMeshes.values()) scene.remove(mesh);
+  bulletMeshes.clear();
+  bulletRender.clear();
+  latestBulletData = [];
+  selfId = null;
+  lockedTargetId = null;
+  stageResultShown = false;
+  latestStageStatus = null;
+  stageResultOverlayEl.classList.add('hidden');
+  deathBanner.classList.add('hidden');
+  killfeedEl.innerHTML = '';
+  keys.clear();
+  firing = false;
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+}
+
 function addKillfeedEntry(html) {
   const div = document.createElement('div');
   div.className = 'killfeed-item';
@@ -247,61 +373,187 @@ function addKillfeedEntry(html) {
   while (killfeedEl.children.length > 6) killfeedEl.removeChild(killfeedEl.firstChild);
 }
 
-socket.on('init', (data) => {
-  selfId = data.selfId;
-  arenaHalfSize = data.arenaHalfSize;
-  obstacles = data.obstacles;
-  tankMaxHp = data.tankMaxHp;
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
 
-  buildGround();
-  buildBoundaryWalls();
-  buildObstacles(obstacles);
+// ---------- Screen navigation ----------
+function showPanel(name) {
+  for (const el of [elPanelName, elPanelMenu, elPanelStages, elPanelGarage]) el.classList.add('hidden');
+  loginOverlay.classList.remove('hidden');
+  ({ name: elPanelName, menu: elPanelMenu, stages: elPanelStages, garage: elPanelGarage })[name].classList.remove('hidden');
+}
 
-  applySnapshot(data.snapshot, true);
-  loginOverlay.classList.add('hidden');
-  hud.classList.add('active');
-  canvas.requestPointerLock = canvas.requestPointerLock || canvas.mozRequestPointerLock;
-});
+function refreshMenuTexts() {
+  menuNameEl.textContent = profile.name;
+  menuCurrencyEl.textContent = profile.currency;
+  hudCurrencyValueEl.textContent = profile.currency;
+}
 
-socket.on('playerJoined', (p) => {
-  addKillfeedEntry(`<span class="k">${escapeHtml(p.name)}</span> đã vào trận`);
-});
-
-socket.on('playerLeft', (p) => {
-  const e = entities.get(p.id);
-  if (e) addKillfeedEntry(`${escapeHtml(e.name)} đã rời trận`);
-  removeEntity(p.id);
-});
-
-let latestBulletData = [];
-
-socket.on('state', (msg) => {
-  applySnapshot(msg.snapshot, false);
-  latestBulletData = msg.snapshot.bullets;
-  for (const ev of msg.events) {
-    if (ev.type === 'kill') {
-      const victim = entities.get(ev.victimId);
-      if (victim) spawnBurst(victim.target.x, victim.target.z);
-      const killerLabel = ev.killerId === selfId ? 'Bạn' : escapeHtml(ev.killerName);
-      const victimLabel = ev.victimId === selfId ? 'Bạn' : escapeHtml(ev.victimName);
-      addKillfeedEntry(`<span class="k">${killerLabel}</span> đã hạ <span class="v">${victimLabel}</span>`);
-      if (ev.victimId === selfId) localDeathStart = performance.now();
-    }
+function renderStages() {
+  stageGridEl.innerHTML = '';
+  for (const s of STAGES_META) {
+    const unlocked = s.id <= profile.unlockedStage;
+    const card = document.createElement('div');
+    card.className = 'stageCard' + (unlocked ? '' : ' locked');
+    card.innerHTML = `
+      <div class="stageName">${escapeHtml(s.name)}</div>
+      <div class="stageMeta">${s.botCount} kẻ địch · +${s.reward} Xu</div>
+      ${unlocked ? '' : '<div class="lockIcon">🔒</div>'}
+    `;
+    if (unlocked) card.addEventListener('click', () => startCampaign(s.id));
+    stageGridEl.appendChild(card);
   }
+}
+
+function renderGarage() {
+  garageCurrencyEl.textContent = profile.currency;
+  upgradeListEl.innerHTML = '';
+  for (const track of UPGRADE_TRACKS) {
+    const lvl = profile.upgrades[track.key];
+    const maxed = lvl >= MAX_UPGRADE_LEVEL;
+    const cost = maxed ? null : UPGRADE_COST[lvl];
+    let pips = '';
+    for (let i = 0; i < MAX_UPGRADE_LEVEL; i++) pips += i < lvl ? '●' : '<span class="empty">●</span>';
+
+    const row = document.createElement('div');
+    row.className = 'upgradeRow';
+    row.innerHTML = `
+      <div class="upgradeInfo">
+        <div class="upgradeName">${track.icon} ${track.label} (Lv.${lvl}/${MAX_UPGRADE_LEVEL})</div>
+        <div class="upgradeValue">${track.fmt(lvl)}${maxed ? '' : ` → <span class="next">${track.fmt(lvl + 1)}</span>`}</div>
+        <div class="upgradePips">${pips}</div>
+      </div>
+      <button class="upgradeBtn" ${maxed || profile.currency < cost ? 'disabled' : ''}>${maxed ? 'Tối đa' : `Nâng cấp (${cost} Xu)`}</button>
+    `;
+    row.querySelector('.upgradeBtn').addEventListener('click', () => tryUpgrade(track.key));
+    upgradeListEl.appendChild(row);
+  }
+}
+
+function tryUpgrade(trackKey) {
+  const lvl = profile.upgrades[trackKey];
+  if (lvl >= MAX_UPGRADE_LEVEL) return;
+  const cost = UPGRADE_COST[lvl];
+  if (profile.currency < cost) return;
+  profile.currency -= cost;
+  profile.upgrades[trackKey] = lvl + 1;
+  saveProfile();
+  renderGarage();
+  refreshMenuTexts();
+}
+
+// ---------- Join / leave flow ----------
+function joinGame(opts) {
+  mode = opts.mode;
+  loginOverlay.classList.add('hidden');
+  socket.emit('join', {
+    name: profile.name,
+    mode: opts.mode,
+    stage: opts.stage,
+    loadout: profile.upgrades,
+  });
+}
+
+function startCampaign(stageId) {
+  joinGame({ mode: 'campaign', stage: stageId });
+}
+
+function leaveRoomAndGoMenu() {
+  socket.emit('leaveRoom');
+  resetGameState();
+  hud.classList.remove('active');
+  refreshMenuTexts();
+  renderStages();
+  showPanel('menu');
+}
+
+function leaveAndRejoinCampaign(stageId) {
+  socket.emit('leaveRoom');
+  resetGameState();
+  startCampaign(stageId);
+}
+
+// ---------- UI wiring ----------
+if (profile.name) {
+  nameInputEl.value = profile.name;
+  refreshMenuTexts();
+  showPanel('menu');
+} else {
+  showPanel('name');
+}
+
+continueBtnEl.addEventListener('click', () => {
+  const name = nameInputEl.value.trim();
+  if (!name) {
+    loginStatusEl.textContent = 'Vui lòng nhập tên.';
+    return;
+  }
+  profile.name = name.slice(0, 16);
+  saveProfile();
+  loginStatusEl.textContent = '';
+  refreshMenuTexts();
+  showPanel('menu');
+});
+nameInputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') continueBtnEl.click();
+});
+nameInputEl.focus();
+
+changeNameLinkEl.addEventListener('click', (e) => {
+  e.preventDefault();
+  nameInputEl.value = profile.name;
+  showPanel('name');
 });
 
+btnArenaEl.addEventListener('click', () => joinGame({ mode: 'arena' }));
+btnCampaignEl.addEventListener('click', () => {
+  renderStages();
+  showPanel('stages');
+});
+btnGarageEl.addEventListener('click', () => {
+  renderGarage();
+  showPanel('garage');
+});
+stagesBackEl.addEventListener('click', () => showPanel('menu'));
+garageBackEl.addEventListener('click', () => {
+  refreshMenuTexts();
+  showPanel('menu');
+});
+
+menuLeaveBtnEl.addEventListener('click', leaveRoomAndGoMenu);
+btnStageMenuEl.addEventListener('click', leaveRoomAndGoMenu);
+btnStageRetryEl.addEventListener('click', () => leaveAndRejoinCampaign(latestStageStatus.stageId));
+btnStageNextEl.addEventListener('click', () => leaveAndRejoinCampaign(latestStageStatus.stageId + 1));
+
+socket.on('connect_error', () => {
+  loginStatusEl.textContent = 'Không thể kết nối tới máy chủ. Vui lòng thử lại.';
+});
+
+socket.on('joinError', (err) => {
+  console.warn('joinError', err && err.message);
+  resetGameState();
+  hud.classList.remove('active');
+  refreshMenuTexts();
+  showPanel('menu');
+});
+
+// ---------- Game state sync ----------
 function applySnapshot(snapshot, isInit) {
   const seen = new Set();
   for (const p of snapshot.players) {
     seen.add(p.id);
     const e = ensureEntity(p.id, p.color);
     e.name = p.name;
+    e.isBot = !!p.isBot;
+    e.nameTagEl.className = 'nameTag' + (p.isBot ? ' bot' : '');
     e.nameLabel.textContent = p.name + (p.id === selfId ? ' (bạn)' : '');
     e.target.x = p.x;
     e.target.z = p.z;
     e.target.bodyRot = p.bodyRot;
     e.target.turretRot = p.turretRot;
     e.hp = p.hp;
+    e.maxHp = p.maxHp;
     e.kills = p.kills;
     e.deaths = p.deaths;
     e.alive = p.alive;
@@ -322,13 +574,84 @@ function updateScoreboard(players) {
   const sorted = players.slice().sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
   let html = '<div class="hdr">Bảng xếp hạng</div>';
   for (const p of sorted.slice(0, 8)) {
-    html += `<div class="row ${p.id === selfId ? 'self' : ''}"><span>${escapeHtml(p.name)}</span><span>${p.kills}/${p.deaths}</span></div>`;
+    const cls = p.id === selfId ? 'self' : p.isBot ? 'bot' : '';
+    html += `<div class="row ${cls}"><span>${escapeHtml(p.name)}</span><span>${p.kills}/${p.deaths}</span></div>`;
   }
   scoreboardEl.innerHTML = html;
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+socket.on('init', (data) => {
+  selfId = data.selfId;
+  mode = data.mode;
+  arenaHalfSize = data.arenaHalfSize;
+  obstacles = data.obstacles;
+  latestStageStatus = data.stageStatus || null;
+  latestBulletData = data.snapshot.bullets;
+
+  if (!worldBuilt) {
+    buildGround();
+    buildBoundaryWalls();
+    buildObstacles(obstacles);
+    worldBuilt = true;
+  }
+
+  applySnapshot(data.snapshot, true);
+  campaignBarEl.classList.toggle('hidden', mode !== 'campaign');
+  loginOverlay.classList.add('hidden');
+  hud.classList.add('active');
+});
+
+socket.on('playerJoined', (p) => {
+  addKillfeedEntry(`<span class="k">${escapeHtml(p.name)}</span> đã vào trận`);
+});
+
+socket.on('playerLeft', (p) => {
+  const e = entities.get(p.id);
+  if (e) addKillfeedEntry(`${escapeHtml(e.name)} đã rời trận`);
+  removeEntity(p.id);
+});
+
+socket.on('state', (msg) => {
+  applySnapshot(msg.snapshot, false);
+  latestBulletData = msg.snapshot.bullets;
+  latestStageStatus = msg.stageStatus || null;
+
+  for (const ev of msg.events) {
+    if (ev.type === 'kill') {
+      const victim = entities.get(ev.victimId);
+      if (victim) spawnBurst(victim.target.x, victim.target.z);
+      const killerLabel = ev.killerId === selfId ? 'Bạn' : escapeHtml(ev.killerName);
+      const victimLabel = ev.victimId === selfId ? 'Bạn' : escapeHtml(ev.victimName);
+      addKillfeedEntry(`<span class="k">${killerLabel}</span> đã hạ <span class="v">${victimLabel}</span>`);
+      if (ev.victimId === selfId) localDeathStart = performance.now();
+    }
+  }
+
+  if (latestStageStatus && latestStageStatus.finished && !stageResultShown) {
+    showStageResult(latestStageStatus);
+  }
+});
+
+function showStageResult(status) {
+  stageResultShown = true;
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+
+  if (status.cleared) {
+    profile.currency += status.reward;
+    profile.unlockedStage = Math.min(
+      STAGES_META.length || status.stageId + 1,
+      Math.max(profile.unlockedStage, status.stageId + 1)
+    );
+    saveProfile();
+    stageResultTitleEl.textContent = '🎉 Hoàn thành!';
+    stageResultSubEl.textContent = `${status.stageName} — Nhận +${status.reward} Xu`;
+    btnStageNextEl.classList.toggle('hidden', !STAGES_META.length || status.stageId >= STAGES_META.length);
+  } else {
+    stageResultTitleEl.textContent = '💥 Thất bại';
+    stageResultSubEl.textContent = `${status.stageName} — Thử lại nào!`;
+    btnStageNextEl.classList.add('hidden');
+  }
+  stageResultOverlayEl.classList.remove('hidden');
 }
 
 // ---------- Input ----------
@@ -341,6 +664,10 @@ let pointerLocked = false;
 window.addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'Space') firing = true;
+  if (e.code === 'Tab' && hud.classList.contains('active')) {
+    e.preventDefault();
+    tryToggleLock();
+  }
 });
 window.addEventListener('keyup', (e) => {
   keys.delete(e.code);
@@ -348,7 +675,8 @@ window.addEventListener('keyup', (e) => {
 });
 
 canvas.addEventListener('click', () => {
-  if (!loginOverlay.classList.contains('hidden')) return;
+  if (loginOverlay.classList.contains('hidden') === false) return;
+  if (!stageResultOverlayEl.classList.contains('hidden')) return;
   if (document.pointerLockElement !== canvas) {
     canvas.requestPointerLock();
   }
@@ -357,11 +685,15 @@ canvas.addEventListener('click', () => {
 document.addEventListener('pointerlockchange', () => {
   pointerLocked = document.pointerLockElement === canvas;
   if (!pointerLocked) firing = false;
+  // While the pointer is locked, ALL mouse events (per spec) are routed to
+  // the locked element, so a real click on this button would never arrive —
+  // hide it during aiming and reveal it once Esc releases the lock.
+  menuLeaveBtnEl.classList.toggle('hidden', pointerLocked);
 });
 
 document.addEventListener('mousemove', (e) => {
   if (!pointerLocked) return;
-  turretYaw += e.movementX * MOUSE_SENSITIVITY;
+  if (!lockedTargetId) turretYaw += e.movementX * MOUSE_SENSITIVITY;
   camPitch -= e.movementY * MOUSE_SENSITIVITY * 0.8;
   camPitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, camPitch));
 });
@@ -372,6 +704,56 @@ canvas.addEventListener('mousedown', (e) => {
 window.addEventListener('mouseup', (e) => {
   if (e.button === 0) firing = false;
 });
+
+function tryToggleLock() {
+  if (lockedTargetId) {
+    lockedTargetId = null;
+    return;
+  }
+  const self = entities.get(selfId);
+  if (!self) return;
+  let best = null;
+  let bestDist = Infinity;
+  for (const [id, e] of entities) {
+    if (id === selfId || !e.alive) continue;
+    const d = Math.hypot(e.render.x - self.render.x, e.render.z - self.render.z);
+    if (d < bestDist) {
+      bestDist = d;
+      best = id;
+    }
+  }
+  lockedTargetId = best;
+}
+
+function updateAimLock(dt) {
+  if (!lockedTargetId) return;
+  const target = entities.get(lockedTargetId);
+  const self = entities.get(selfId);
+  if (!target || !target.alive || !self) {
+    lockedTargetId = null;
+    return;
+  }
+  const dx = target.render.x - self.render.x;
+  const dz = target.render.z - self.render.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist > LOCK_MAX_RANGE) {
+    lockedTargetId = null;
+    return;
+  }
+  const desired = Math.atan2(dx, dz);
+  turretYaw = angleLerpCapped(turretYaw, desired, LOCK_TURN_RATE * dt);
+}
+
+function updateLockUI() {
+  if (lockedTargetId && entities.has(lockedTargetId)) {
+    crosshairEl.classList.add('locked');
+    lockLabelEl.classList.remove('hidden');
+    lockLabelEl.textContent = '🔒 ' + entities.get(lockedTargetId).name;
+  } else {
+    crosshairEl.classList.remove('locked');
+    lockLabelEl.classList.add('hidden');
+  }
+}
 
 function isBlockedByObstacle(x, z, pad) {
   for (const o of obstacles) {
@@ -391,28 +773,19 @@ function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
 
-// ---------- Login flow ----------
-function startGame() {
-  const name = nameInput.value.trim() || 'Tank';
-  loginStatus.textContent = '';
-  playBtn.disabled = true;
-  socket.emit('join', { name });
-}
-playBtn.addEventListener('click', startGame);
-nameInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') startGame();
-});
-nameInput.focus();
-
-socket.on('connect_error', () => {
-  loginStatus.textContent = 'Không thể kết nối tới máy chủ. Vui lòng thử lại.';
-  playBtn.disabled = false;
-});
-
 // ---------- Main loop ----------
 let lastFireTimeLocal = 0;
-const FIRE_COOLDOWN_MS_LOCAL = 550;
+let fireCooldownLocal = 550;
 let lastTime = performance.now();
+
+function currentLoadoutStats() {
+  const u = profile.upgrades;
+  return {
+    moveSpeed: UPGRADES.agilityMove[u.agility],
+    turnSpeed: UPGRADES.agilityTurn[u.agility],
+    fireCooldown: UPGRADES.rate[u.rate],
+  };
+}
 
 function sendInput() {
   if (!selfId) return;
@@ -431,9 +804,12 @@ function updateLocalPrediction(dt) {
   const self = entities.get(selfId);
   if (!self || !self.alive) return;
 
+  const stats = currentLoadoutStats();
+  fireCooldownLocal = stats.fireCooldown;
+
   let bodyRot = self.render.bodyRot;
-  if (keys.has('KeyA') || keys.has('ArrowLeft')) bodyRot -= TURN_SPEED * dt;
-  if (keys.has('KeyD') || keys.has('ArrowRight')) bodyRot += TURN_SPEED * dt;
+  if (keys.has('KeyA') || keys.has('ArrowLeft')) bodyRot -= stats.turnSpeed * dt;
+  if (keys.has('KeyD') || keys.has('ArrowRight')) bodyRot += stats.turnSpeed * dt;
 
   let moveDir = 0;
   if (keys.has('KeyW') || keys.has('ArrowUp')) moveDir += 1;
@@ -442,8 +818,8 @@ function updateLocalPrediction(dt) {
   let x = self.render.x;
   let z = self.render.z;
   if (moveDir !== 0) {
-    const dx = Math.sin(bodyRot) * moveDir * MOVE_SPEED * dt;
-    const dz = Math.cos(bodyRot) * moveDir * MOVE_SPEED * dt;
+    const dx = Math.sin(bodyRot) * moveDir * stats.moveSpeed * dt;
+    const dz = Math.cos(bodyRot) * moveDir * stats.moveSpeed * dt;
     const nx = clamp(x + dx, -arenaHalfSize + TANK_RADIUS, arenaHalfSize - TANK_RADIUS);
     if (!isBlockedByObstacle(nx, z, TANK_RADIUS)) x = nx;
     const nz = clamp(z + dz, -arenaHalfSize + TANK_RADIUS, arenaHalfSize - TANK_RADIUS);
@@ -455,8 +831,6 @@ function updateLocalPrediction(dt) {
   self.render.z = z;
   self.render.turretRot = turretYaw;
 
-  // Gently reconcile toward the server's authoritative position so small
-  // divergences (e.g. collision-shape edge cases) don't accumulate.
   const correction = 0.06;
   self.render.x += (self.target.x - self.render.x) * correction;
   self.render.z += (self.target.z - self.render.z) * correction;
@@ -492,14 +866,12 @@ function updateEntityMeshes() {
       const sy = (-screenPos.y * 0.5 + 0.5) * window.innerHeight;
       e.nameTagEl.style.left = sx + 'px';
       e.nameTagEl.style.top = sy + 'px';
-      const hpPct = Math.max(0, Math.min(100, (e.hp / tankMaxHp) * 100));
+      const hpPct = Math.max(0, Math.min(100, (e.hp / e.maxHp) * 100));
       e.hpFillEl.style.width = hpPct + '%';
       e.hpFillEl.style.background = hpPct > 50 ? '#3ddc6c' : hpPct > 25 ? '#ffb020' : '#ff4d4d';
     }
   }
 }
-
-const bulletRender = new Map(); // id -> {x,z}
 
 function syncBullets() {
   const seen = new Set();
@@ -544,13 +916,20 @@ function updateCamera() {
 
 function updateHud() {
   const self = entities.get(selfId);
+  hudCurrencyValueEl.textContent = profile.currency;
+
+  if (mode === 'campaign' && latestStageStatus) {
+    campaignStageNameEl.textContent = latestStageStatus.stageName;
+    campaignEnemiesEl.textContent = latestStageStatus.enemiesRemaining;
+  }
+
   if (!self) return;
-  const hpPct = Math.max(0, Math.min(100, (self.hp / tankMaxHp) * 100));
+  const hpPct = Math.max(0, Math.min(100, (self.hp / self.maxHp) * 100));
   healthBar.style.width = hpPct + '%';
-  healthLabel.textContent = `${Math.max(0, Math.round(self.hp))} / ${tankMaxHp}`;
+  healthLabel.textContent = `${Math.max(0, Math.round(self.hp))} / ${self.maxHp}`;
 
   const sinceFire = Date.now() - lastFireTimeLocal;
-  const reloadPct = Math.min(100, (sinceFire / FIRE_COOLDOWN_MS_LOCAL) * 100);
+  const reloadPct = Math.min(100, (sinceFire / fireCooldownLocal) * 100);
   reloadBar.style.width = reloadPct + '%';
 
   if (!self.alive) {
@@ -562,11 +941,10 @@ function updateHud() {
   }
 }
 
-// Track local fire cooldown purely for the UI reload bar.
 setInterval(() => {
   if (firing) {
     const now = Date.now();
-    if (now - lastFireTimeLocal >= FIRE_COOLDOWN_MS_LOCAL) lastFireTimeLocal = now;
+    if (now - lastFireTimeLocal >= fireCooldownLocal) lastFireTimeLocal = now;
   }
 }, 30);
 
@@ -577,6 +955,7 @@ function animate() {
   lastTime = now;
 
   if (selfId) {
+    updateAimLock(dt);
     updateLocalPrediction(dt);
     updateRemoteInterpolation();
     updateEntityMeshes();
@@ -584,6 +963,7 @@ function animate() {
     updateBursts(dt);
     updateCamera();
     updateHud();
+    updateLockUI();
   }
 
   renderer.render(scene, camera);

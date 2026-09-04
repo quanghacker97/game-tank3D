@@ -4,21 +4,20 @@ const {
   TICK_MS,
   ARENA_HALF_SIZE,
   TANK_RADIUS,
-  MOVE_SPEED,
-  TURN_SPEED,
-  TANK_MAX_HP,
   RESPAWN_DELAY_MS,
   BULLET_RADIUS,
   BULLET_SPEED,
   BULLET_LIFETIME_MS,
-  BULLET_DAMAGE,
-  FIRE_COOLDOWN_MS,
   OBSTACLES,
   SPAWN_POINTS,
   PLAYER_COLORS,
+  MAX_UPGRADE_LEVEL,
+  UPGRADES,
+  BOT_TIERS,
 } = require('./constants');
 
 let nextBulletId = 1;
+let nextBotSeq = 1;
 
 function randomSpawn() {
   const p = SPAWN_POINTS[Math.floor(Math.random() * SPAWN_POINTS.length)];
@@ -41,31 +40,98 @@ function isBlockedByObstacle(x, z, pad) {
   return false;
 }
 
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function clampLevel(v) {
+  const n = Math.round(Number(v));
+  if (!Number.isFinite(n)) return 0;
+  return clamp(n, 0, MAX_UPGRADE_LEVEL);
+}
+
+// Wrapped angle difference b-a, result in (-PI, PI].
+function angleDiff(a, b) {
+  let d = (b - a) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+
+function statsFromLoadout(loadout) {
+  const l = {
+    power: clampLevel(loadout && loadout.power),
+    defense: clampLevel(loadout && loadout.defense),
+    agility: clampLevel(loadout && loadout.agility),
+    rate: clampLevel(loadout && loadout.rate),
+  };
+  return {
+    damage: UPGRADES.power[l.power],
+    maxHp: UPGRADES.defense[l.defense],
+    moveSpeed: UPGRADES.agilityMove[l.agility],
+    turnSpeed: UPGRADES.agilityTurn[l.agility],
+    fireCooldown: UPGRADES.rate[l.rate],
+    levels: l,
+  };
+}
+
+function statsFromBotTier(tierName) {
+  const tier = BOT_TIERS[tierName] || BOT_TIERS.easy;
+  return {
+    damage: tier.damage,
+    maxHp: tier.maxHp,
+    moveSpeed: tier.moveSpeed,
+    turnSpeed: tier.turnSpeed,
+    fireCooldown: tier.fireCooldown,
+    aimError: tier.aimError,
+    engageRange: tier.engageRange,
+  };
+}
+
+function sanitizeName(name) {
+  const trimmed = String(name || '').trim().slice(0, 16);
+  return trimmed.replace(/[<>]/g, '') || 'Tank';
+}
+
 class Game {
-  constructor() {
-    this.players = new Map(); // id -> player state
+  /**
+   * @param {string} roomId
+   * @param {'arena'|'campaign'} mode
+   * @param {object|null} stageDef  Required when mode === 'campaign'.
+   */
+  constructor(roomId, mode, stageDef) {
+    this.roomId = roomId;
+    this.mode = mode;
+    this.stageDef = stageDef || null;
+    this.players = new Map(); // id -> player state (humans + bots)
     this.bullets = new Map(); // id -> bullet state
     this.events = []; // transient events (hit/kill/join/leave) since last flush
     this._colorIndex = 0;
+    this.finished = false;
+    this.stageCleared = false;
+    this.stageFailed = false;
   }
 
-  addPlayer(id, name) {
+  addPlayer(id, name, loadout) {
     const spawn = randomSpawn();
     const color = PLAYER_COLORS[this._colorIndex % PLAYER_COLORS.length];
     this._colorIndex++;
+    const stats = statsFromLoadout(loadout);
 
     const player = {
       id,
       name: sanitizeName(name),
+      isBot: false,
       x: spawn.x,
       z: spawn.z,
       bodyRot: spawn.rotY,
       turretRot: spawn.rotY,
-      hp: TANK_MAX_HP,
+      hp: stats.maxHp,
       alive: true,
       kills: 0,
       deaths: 0,
       color,
+      stats,
       lastFireTime: 0,
       deathTime: 0,
       input: { forward: false, back: false, left: false, right: false, turretRot: spawn.rotY, firing: false },
@@ -73,6 +139,36 @@ class Game {
     this.players.set(id, player);
     this.events.push({ type: 'join', id, name: player.name });
     return player;
+  }
+
+  addBot(tierName) {
+    const id = `bot-${this.roomId}-${nextBotSeq++}`;
+    const spawn = randomSpawn();
+    const stats = statsFromBotTier(tierName);
+    const tier = BOT_TIERS[tierName] || BOT_TIERS.easy;
+
+    const bot = {
+      id,
+      name: `Địch (${tierLabel(tierName)})`,
+      isBot: true,
+      tierName,
+      x: spawn.x,
+      z: spawn.z,
+      bodyRot: spawn.rotY,
+      turretRot: spawn.rotY,
+      hp: stats.maxHp,
+      alive: true,
+      kills: 0,
+      deaths: 0,
+      color: tier.color,
+      stats,
+      lastFireTime: 0,
+      deathTime: 0,
+      input: { forward: false, back: false, left: false, right: false, turretRot: spawn.rotY, firing: false },
+      ai: { lastX: spawn.x, lastZ: spawn.z, stuckTicks: 0, avoidUntil: 0, avoidSign: 1, aimNoise: 0 },
+    };
+    this.players.set(id, bot);
+    return bot;
   }
 
   removePlayer(id) {
@@ -84,7 +180,7 @@ class Game {
 
   setInput(id, input) {
     const player = this.players.get(id);
-    if (!player || !input) return;
+    if (!player || player.isBot || !input) return;
     player.input.forward = !!input.forward;
     player.input.back = !!input.back;
     player.input.left = !!input.left;
@@ -95,6 +191,57 @@ class Game {
     }
   }
 
+  _primaryHuman() {
+    for (const p of this.players.values()) {
+      if (!p.isBot) return p;
+    }
+    return null;
+  }
+
+  _updateBotAI(bot, now) {
+    const target = this._primaryHuman();
+    if (!target || !target.alive) {
+      bot.input.forward = false;
+      bot.input.back = false;
+      bot.input.left = false;
+      bot.input.right = false;
+      bot.input.firing = false;
+      return;
+    }
+
+    const dx = target.x - bot.x;
+    const dz = target.z - bot.z;
+    const dist = Math.hypot(dx, dz);
+    const desiredAngle = Math.atan2(dx, dz);
+
+    // Simple stuck detection -> temporary steer offset to route around cover.
+    const moved = Math.hypot(bot.x - bot.ai.lastX, bot.z - bot.ai.lastZ);
+    if (bot.input.forward && moved < 0.05) bot.ai.stuckTicks++;
+    else bot.ai.stuckTicks = 0;
+    bot.ai.lastX = bot.x;
+    bot.ai.lastZ = bot.z;
+    if (bot.ai.stuckTicks > 6 && now > bot.ai.avoidUntil) {
+      bot.ai.avoidSign = Math.random() < 0.5 ? -1 : 1;
+      bot.ai.avoidUntil = now + 1200;
+      bot.ai.stuckTicks = 0;
+    }
+    const steerAngle = now < bot.ai.avoidUntil ? desiredAngle + bot.ai.avoidSign * 1.4 : desiredAngle;
+    const steerDiff = angleDiff(bot.bodyRot, steerAngle);
+    bot.input.left = steerDiff < -0.05;
+    bot.input.right = steerDiff > 0.05;
+
+    const tooClose = dist < 10;
+    const tooFar = dist > bot.stats.engageRange * 0.7;
+    bot.input.forward = tooFar;
+    bot.input.back = tooClose;
+
+    bot.ai.aimNoise = bot.ai.aimNoise * 0.9 + (Math.random() - 0.5) * bot.stats.aimError * 0.2;
+    bot.input.turretRot = desiredAngle + bot.ai.aimNoise;
+
+    const turretAligned = Math.abs(angleDiff(bot.turretRot, desiredAngle)) < 0.12;
+    bot.input.firing = dist <= bot.stats.engageRange && turretAligned;
+  }
+
   _spawnBullet(owner) {
     const id = nextBulletId++;
     const muzzleDist = TANK_RADIUS + 1.2;
@@ -103,6 +250,7 @@ class Game {
     this.bullets.set(id, {
       id,
       ownerId: owner.id,
+      damage: owner.stats.damage,
       x: owner.x + dirX * muzzleDist,
       z: owner.z + dirZ * muzzleDist,
       vx: dirX * BULLET_SPEED,
@@ -112,35 +260,43 @@ class Game {
   }
 
   tick() {
+    if (this.finished) return;
+
     const dt = TICK_MS / 1000;
     const now = Date.now();
 
     for (const player of this.players.values()) {
+      if (player.isBot && player.alive) this._updateBotAI(player, now);
+
       if (!player.alive) {
-        if (now - player.deathTime >= RESPAWN_DELAY_MS) {
+        if (!player.isBot && this.mode === 'arena' && now - player.deathTime >= RESPAWN_DELAY_MS) {
           const spawn = randomSpawn();
           player.x = spawn.x;
           player.z = spawn.z;
           player.bodyRot = spawn.rotY;
           player.turretRot = spawn.rotY;
-          player.hp = TANK_MAX_HP;
+          player.hp = player.stats.maxHp;
           player.alive = true;
+        } else if (!player.isBot && this.mode === 'campaign' && !this.finished) {
+          this.finished = true;
+          this.stageFailed = true;
+          this.events.push({ type: 'stageFailed' });
         }
         continue;
       }
 
       const { input } = player;
 
-      if (input.left) player.bodyRot -= TURN_SPEED * dt;
-      if (input.right) player.bodyRot += TURN_SPEED * dt;
+      if (input.left) player.bodyRot -= player.stats.turnSpeed * dt;
+      if (input.right) player.bodyRot += player.stats.turnSpeed * dt;
 
       let moveDir = 0;
       if (input.forward) moveDir += 1;
       if (input.back) moveDir -= 1;
 
       if (moveDir !== 0) {
-        const dx = Math.sin(player.bodyRot) * moveDir * MOVE_SPEED * dt;
-        const dz = Math.cos(player.bodyRot) * moveDir * MOVE_SPEED * dt;
+        const dx = Math.sin(player.bodyRot) * moveDir * player.stats.moveSpeed * dt;
+        const dz = Math.cos(player.bodyRot) * moveDir * player.stats.moveSpeed * dt;
 
         const nx = clamp(player.x + dx, -ARENA_HALF_SIZE + TANK_RADIUS, ARENA_HALF_SIZE - TANK_RADIUS);
         if (!isBlockedByObstacle(nx, player.z, TANK_RADIUS)) player.x = nx;
@@ -151,7 +307,7 @@ class Game {
 
       player.turretRot = input.turretRot;
 
-      if (input.firing && now - player.lastFireTime >= FIRE_COOLDOWN_MS) {
+      if (input.firing && now - player.lastFireTime >= player.stats.fireCooldown) {
         player.lastFireTime = now;
         this._spawnBullet(player);
       }
@@ -182,7 +338,7 @@ class Game {
           const distSq = dx * dx + dz * dz;
           const hitDist = TANK_RADIUS + BULLET_RADIUS;
           if (distSq <= hitDist * hitDist) {
-            target.hp -= BULLET_DAMAGE;
+            target.hp -= bullet.damage;
             remove = true;
             if (target.hp <= 0) {
               target.hp = 0;
@@ -212,6 +368,29 @@ class Game {
 
       if (remove) this.bullets.delete(bullet.id);
     }
+
+    if (this.mode === 'campaign' && !this.finished) {
+      const botsAlive = Array.from(this.players.values()).some((p) => p.isBot && p.alive);
+      if (!botsAlive) {
+        this.finished = true;
+        this.stageCleared = true;
+        this.events.push({ type: 'stageClear', reward: this.stageDef.reward });
+      }
+    }
+  }
+
+  getStageStatus() {
+    if (this.mode !== 'campaign') return null;
+    const enemiesRemaining = Array.from(this.players.values()).filter((p) => p.isBot && p.alive).length;
+    return {
+      stageId: this.stageDef.id,
+      stageName: this.stageDef.name,
+      enemiesRemaining,
+      finished: this.finished,
+      cleared: this.stageCleared,
+      failed: this.stageFailed,
+      reward: this.stageCleared ? this.stageDef.reward : 0,
+    };
   }
 
   snapshot() {
@@ -219,11 +398,13 @@ class Game {
       players: Array.from(this.players.values()).map((p) => ({
         id: p.id,
         name: p.name,
+        isBot: p.isBot,
         x: p.x,
         z: p.z,
         bodyRot: p.bodyRot,
         turretRot: p.turretRot,
         hp: p.hp,
+        maxHp: p.stats.maxHp,
         alive: p.alive,
         kills: p.kills,
         deaths: p.deaths,
@@ -245,13 +426,11 @@ class Game {
   }
 }
 
-function clamp(v, min, max) {
-  return Math.max(min, Math.min(max, v));
-}
-
-function sanitizeName(name) {
-  const trimmed = String(name || '').trim().slice(0, 16);
-  return trimmed.replace(/[<>]/g, '') || 'Tank';
+function tierLabel(tierName) {
+  if (tierName === 'easy') return 'Dễ';
+  if (tierName === 'medium') return 'Vừa';
+  if (tierName === 'hard') return 'Khó';
+  return tierName;
 }
 
 module.exports = { Game };

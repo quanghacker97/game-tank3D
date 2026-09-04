@@ -1133,8 +1133,9 @@ function updateLocalPrediction(dt) {
   if (moveForward !== 0 || moveRight !== 0) {
     const fx = Math.sin(bodyRot);
     const fz = Math.cos(bodyRot);
-    const rx = Math.sin(bodyRot + Math.PI / 2);
-    const rz = Math.cos(bodyRot + Math.PI / 2);
+    // -PI/2 to match server/Game.js — see comment there.
+    const rx = Math.sin(bodyRot - Math.PI / 2);
+    const rz = Math.cos(bodyRot - Math.PI / 2);
     const dx = (fx * moveForward + rx * moveRight) * stats.moveSpeed * dt;
     const dz = (fz * moveForward + rz * moveRight) * stats.moveSpeed * dt;
     const nx = clamp(x + dx, -arenaHalfSize + TANK_RADIUS, arenaHalfSize - TANK_RADIUS);

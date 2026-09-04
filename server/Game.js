@@ -309,8 +309,11 @@ class Game {
       if (moveForward !== 0 || moveRight !== 0) {
         const fx = Math.sin(player.bodyRot);
         const fz = Math.cos(player.bodyRot);
-        const rx = Math.sin(player.bodyRot + Math.PI / 2);
-        const rz = Math.cos(player.bodyRot + Math.PI / 2);
+        // -PI/2 (not +PI/2): with forward = (sin, cos), rotating by -90° is
+        // the direction that actually reads as screen-right for our chase
+        // camera (verified empirically — the other sign strafed backwards).
+        const rx = Math.sin(player.bodyRot - Math.PI / 2);
+        const rz = Math.cos(player.bodyRot - Math.PI / 2);
         const dx = (fx * moveForward + rx * moveRight) * player.stats.moveSpeed * dt;
         const dz = (fz * moveForward + rz * moveRight) * player.stats.moveSpeed * dt;
 

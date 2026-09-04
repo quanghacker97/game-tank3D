@@ -8,7 +8,10 @@ const TICK_MS = 1000 / TICK_RATE;
 
 const ARENA_HALF_SIZE = 60; // world spans [-60, 60] on X and Z
 
-const TANK_RADIUS = 2.3;
+// Tank meshes render at 0.4x their original modeled size (see
+// createTankMesh's tankGroup.scale in client.js) — the hitbox shrinks with
+// them so it still matches the visible silhouette.
+const TANK_RADIUS = 0.92;
 
 const RESPAWN_DELAY_MS = 3000;
 

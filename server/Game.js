@@ -248,7 +248,7 @@ class Game {
 
   _spawnBullet(owner) {
     const id = nextBulletId++;
-    const muzzleDist = TANK_RADIUS + 1.2;
+    const muzzleDist = TANK_RADIUS + 0.48; // barrel tip, scaled with the tank's 0.4x model
     const dirX = Math.sin(owner.turretRot);
     const dirZ = Math.cos(owner.turretRot);
     this.bullets.set(id, {

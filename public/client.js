@@ -2,7 +2,8 @@
 
 // Must mirror server/constants.js so local prediction matches the
 // authoritative simulation closely enough that server corrections stay tiny.
-const TANK_RADIUS = 2.3;
+const TANK_RADIUS = 0.92;
+const TANK_VISUAL_SCALE = 0.4;
 const RESPAWN_DELAY_MS = 3000;
 const MOUSE_SENSITIVITY = 0.0022;
 const TOUCH_LOOK_SENSITIVITY = 0.0026;
@@ -398,6 +399,7 @@ function createTankMesh(color) {
 
   tankGroup.add(bodyPivot);
   tankGroup.add(turretPivot);
+  tankGroup.scale.setScalar(TANK_VISUAL_SCALE);
   scene.add(tankGroup);
 
   return { tankGroup, bodyPivot, turretPivot };
@@ -418,7 +420,7 @@ function spawnBurst(x, z) {
   const geo = new THREE.SphereGeometry(1, 10, 10);
   const mat = new THREE.MeshBasicMaterial({ color: 0xff7722, transparent: true, opacity: 0.9 });
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set(x, 1.6, z);
+  mesh.position.set(x, 0.64, z);
   scene.add(mesh);
   bursts.push({ mesh, age: 0 });
 }
@@ -1171,7 +1173,7 @@ function updateEntityMeshes() {
     turretPivot.rotation.y = e.render.turretRot;
     tankGroup.visible = e.alive;
 
-    const screenPos = new THREE.Vector3(e.render.x, 3.4, e.render.z).project(camera);
+    const screenPos = new THREE.Vector3(e.render.x, 1.7, e.render.z).project(camera);
     const behindCamera = screenPos.z > 1;
     if (behindCamera || !e.alive) {
       e.nameTagEl.style.display = 'none';
@@ -1202,7 +1204,7 @@ function syncBullets() {
     }
     r.x += (b.x - r.x) * 0.5;
     r.z += (b.z - r.z) * 0.5;
-    mesh.position.set(r.x, 1.7, r.z);
+    mesh.position.set(r.x, 0.68, r.z);
   }
   for (const [id, mesh] of bulletMeshes) {
     if (!seen.has(id)) {
@@ -1219,14 +1221,14 @@ function updateCamera() {
   const yaw = self.render.turretRot;
   const targetX = self.render.x;
   const targetZ = self.render.z;
-  const targetY = 1.6;
+  const targetY = 0.64;
 
   const camX = targetX - Math.sin(yaw) * CAM_DIST * Math.cos(camPitch);
   const camZ = targetZ - Math.cos(yaw) * CAM_DIST * Math.cos(camPitch);
   const camY = targetY + CAM_DIST * Math.sin(camPitch) + CAM_BASE_HEIGHT * camPitch;
 
   camera.position.set(camX, camY + 2, camZ);
-  camera.lookAt(targetX, targetY + 1.2, targetZ);
+  camera.lookAt(targetX, targetY + 0.48, targetZ);
 }
 
 function updateHud() {

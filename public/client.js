@@ -5,6 +5,8 @@
 const TANK_RADIUS = 2.3;
 const RESPAWN_DELAY_MS = 3000;
 const MOUSE_SENSITIVITY = 0.0022;
+const TOUCH_LOOK_SENSITIVITY = 0.0026;
+const JOYSTICK_RADIUS = 48; // px, matches #touchJoystickBase knob travel
 const PITCH_MIN = 0.05;
 const PITCH_MAX = 0.9;
 const CAM_DIST = 11;
@@ -120,6 +122,11 @@ const stageResultSubEl = document.getElementById('stageResultSub');
 const btnStageNextEl = document.getElementById('btnStageNext');
 const btnStageRetryEl = document.getElementById('btnStageRetry');
 const btnStageMenuEl = document.getElementById('btnStageMenu');
+const touchControlsEl = document.getElementById('touchControls');
+const touchJoystickBaseEl = document.getElementById('touchJoystickBase');
+const touchJoystickKnobEl = document.getElementById('touchJoystickKnob');
+const touchFireBtnEl = document.getElementById('touchFireBtn');
+const touchLockBtnEl = document.getElementById('touchLockBtn');
 
 // ---------- Three.js setup ----------
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -809,11 +816,14 @@ function showStageResult(status) {
 }
 
 // ---------- Input ----------
+const isTouchDevice = window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+
 const keys = new Set();
 let turretYaw = 0;
 let camPitch = 0.3;
 let firing = false;
 let pointerLocked = false;
+const joystickVec = { x: 0, y: 0 }; // x = strafe right, y = forward, both -1..1
 
 window.addEventListener('keydown', (e) => {
   keys.add(e.code);
@@ -828,36 +838,169 @@ window.addEventListener('keyup', (e) => {
   if (e.code === 'Space') firing = false;
 });
 
-canvas.addEventListener('click', () => {
-  if (loginOverlay.classList.contains('hidden') === false) return;
-  if (!stageResultOverlayEl.classList.contains('hidden')) return;
-  if (document.pointerLockElement !== canvas) {
-    canvas.requestPointerLock();
+if (!isTouchDevice) {
+  canvas.addEventListener('click', () => {
+    if (loginOverlay.classList.contains('hidden') === false) return;
+    if (!stageResultOverlayEl.classList.contains('hidden')) return;
+    if (document.pointerLockElement !== canvas) {
+      canvas.requestPointerLock();
+    }
+  });
+
+  document.addEventListener('pointerlockchange', () => {
+    pointerLocked = document.pointerLockElement === canvas;
+    if (!pointerLocked) firing = false;
+    // While the pointer is locked, ALL mouse events (per spec) are routed to
+    // the locked element, so a real click on this button would never arrive —
+    // hide it during aiming and reveal it once Esc releases the lock.
+    menuLeaveBtnEl.classList.toggle('hidden', pointerLocked);
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!pointerLocked) return;
+    if (!lockedTargetId) turretYaw += e.movementX * MOUSE_SENSITIVITY;
+    camPitch -= e.movementY * MOUSE_SENSITIVITY * 0.8;
+    camPitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, camPitch));
+  });
+
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 0 && pointerLocked) firing = true;
+  });
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 0) firing = false;
+  });
+}
+
+// ---------- Touch controls (mobile) ----------
+// Left thumb: fixed on-screen joystick drives movement. Anywhere else on the
+// canvas: drag to look/aim (turret + camera), tracked by touch identifier so
+// it works at the same time as the joystick. Dedicated buttons fire and
+// lock/unlock the nearest target. No Pointer Lock is used on touch at all.
+let joystickTouchId = null;
+let joystickCenter = { x: 0, y: 0 };
+let lookTouchId = null;
+let lookLastX = 0;
+let lookLastY = 0;
+
+function setupTouchControls() {
+  if (!isTouchDevice) return;
+  document.body.classList.add('touch-mode');
+  touchControlsEl.classList.remove('hidden');
+
+  function updateJoystickFromTouch(t) {
+    let dx = t.clientX - joystickCenter.x;
+    let dy = t.clientY - joystickCenter.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > JOYSTICK_RADIUS) {
+      dx = (dx / dist) * JOYSTICK_RADIUS;
+      dy = (dy / dist) * JOYSTICK_RADIUS;
+    }
+    joystickVec.x = dx / JOYSTICK_RADIUS;
+    joystickVec.y = -dy / JOYSTICK_RADIUS; // screen up = forward
+    touchJoystickKnobEl.style.transform = `translate(${dx}px, ${dy}px)`;
   }
-});
 
-document.addEventListener('pointerlockchange', () => {
-  pointerLocked = document.pointerLockElement === canvas;
-  if (!pointerLocked) firing = false;
-  // While the pointer is locked, ALL mouse events (per spec) are routed to
-  // the locked element, so a real click on this button would never arrive —
-  // hide it during aiming and reveal it once Esc releases the lock.
-  menuLeaveBtnEl.classList.toggle('hidden', pointerLocked);
-});
+  function resetJoystick() {
+    joystickTouchId = null;
+    joystickVec.x = 0;
+    joystickVec.y = 0;
+    touchJoystickKnobEl.style.transform = 'translate(0px, 0px)';
+  }
 
-document.addEventListener('mousemove', (e) => {
-  if (!pointerLocked) return;
-  if (!lockedTargetId) turretYaw += e.movementX * MOUSE_SENSITIVITY;
-  camPitch -= e.movementY * MOUSE_SENSITIVITY * 0.8;
-  camPitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, camPitch));
-});
+  touchJoystickBaseEl.addEventListener(
+    'touchstart',
+    (e) => {
+      if (joystickTouchId !== null) return;
+      const t = e.changedTouches[0];
+      joystickTouchId = t.identifier;
+      const rect = touchJoystickBaseEl.getBoundingClientRect();
+      joystickCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      updateJoystickFromTouch(t);
+      e.preventDefault();
+    },
+    { passive: false }
+  );
+  touchJoystickBaseEl.addEventListener(
+    'touchmove',
+    (e) => {
+      for (const t of e.changedTouches) {
+        if (t.identifier === joystickTouchId) updateJoystickFromTouch(t);
+      }
+      e.preventDefault();
+    },
+    { passive: false }
+  );
+  touchJoystickBaseEl.addEventListener('touchend', (e) => {
+    for (const t of e.changedTouches) if (t.identifier === joystickTouchId) resetJoystick();
+  });
+  touchJoystickBaseEl.addEventListener('touchcancel', resetJoystick);
 
-canvas.addEventListener('mousedown', (e) => {
-  if (e.button === 0 && pointerLocked) firing = true;
-});
-window.addEventListener('mouseup', (e) => {
-  if (e.button === 0) firing = false;
-});
+  canvas.addEventListener(
+    'touchstart',
+    (e) => {
+      for (const t of e.changedTouches) {
+        if (lookTouchId === null) {
+          lookTouchId = t.identifier;
+          lookLastX = t.clientX;
+          lookLastY = t.clientY;
+        }
+      }
+    },
+    { passive: true }
+  );
+  canvas.addEventListener(
+    'touchmove',
+    (e) => {
+      for (const t of e.changedTouches) {
+        if (t.identifier !== lookTouchId) continue;
+        const dx = t.clientX - lookLastX;
+        const dy = t.clientY - lookLastY;
+        lookLastX = t.clientX;
+        lookLastY = t.clientY;
+        if (!lockedTargetId) turretYaw += dx * TOUCH_LOOK_SENSITIVITY;
+        camPitch -= dy * TOUCH_LOOK_SENSITIVITY * 0.8;
+        camPitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, camPitch));
+      }
+      e.preventDefault();
+    },
+    { passive: false }
+  );
+  function endLookTouch(e) {
+    for (const t of e.changedTouches) if (t.identifier === lookTouchId) lookTouchId = null;
+  }
+  canvas.addEventListener('touchend', endLookTouch);
+  canvas.addEventListener('touchcancel', endLookTouch);
+
+  touchFireBtnEl.addEventListener(
+    'touchstart',
+    (e) => {
+      firing = true;
+      e.preventDefault();
+    },
+    { passive: false }
+  );
+  touchFireBtnEl.addEventListener(
+    'touchend',
+    (e) => {
+      firing = false;
+      e.preventDefault();
+    },
+    { passive: false }
+  );
+  touchFireBtnEl.addEventListener('touchcancel', () => {
+    firing = false;
+  });
+
+  touchLockBtnEl.addEventListener(
+    'touchstart',
+    (e) => {
+      tryToggleLock();
+      e.preventDefault();
+    },
+    { passive: false }
+  );
+}
+setupTouchControls();
 
 function tryToggleLock() {
   if (lockedTargetId) {
@@ -940,13 +1083,28 @@ function currentLoadoutStats() {
   };
 }
 
+// Keyboard (normalized so a diagonal isn't faster) takes priority; falls
+// back to the mobile joystick, which is already analog/pre-normalized.
+function computeMoveVector() {
+  let f = 0;
+  let r = 0;
+  if (keys.has('KeyW') || keys.has('ArrowUp')) f += 1;
+  if (keys.has('KeyS') || keys.has('ArrowDown')) f -= 1;
+  if (keys.has('KeyD') || keys.has('ArrowRight')) r += 1;
+  if (keys.has('KeyA') || keys.has('ArrowLeft')) r -= 1;
+  if (f !== 0 || r !== 0) {
+    const len = Math.hypot(f, r);
+    return { f: f / len, r: r / len };
+  }
+  return { f: joystickVec.y, r: joystickVec.x };
+}
+
 function sendInput() {
   if (!selfId) return;
+  const move = computeMoveVector();
   socket.emit('input', {
-    forward: keys.has('KeyW') || keys.has('ArrowUp'),
-    back: keys.has('KeyS') || keys.has('ArrowDown'),
-    left: keys.has('KeyA') || keys.has('ArrowLeft'),
-    right: keys.has('KeyD') || keys.has('ArrowRight'),
+    moveForward: move.f,
+    moveRight: move.r,
     turretRot: turretYaw,
     firing,
   });
@@ -960,21 +1118,13 @@ function updateLocalPrediction(dt) {
   const stats = currentLoadoutStats();
   fireCooldownLocal = stats.fireCooldown;
 
-  // Hull always faces the same way the turret aims (mouse-driven) — WASD
-  // moves relative to that single facing direction: W/S forward/back,
-  // A/D strafe left/right. This mirrors server/Game.js exactly.
+  // Hull always faces the same way the turret aims (mouse/touch-driven) —
+  // movement below is relative to that single facing direction: forward/back
+  // and strafe left/right. This mirrors server/Game.js exactly.
   const bodyRot = turretYaw;
-
-  let moveForward = 0;
-  if (keys.has('KeyW') || keys.has('ArrowUp')) moveForward += 1;
-  if (keys.has('KeyS') || keys.has('ArrowDown')) moveForward -= 1;
-  let moveRight = 0;
-  if (keys.has('KeyD') || keys.has('ArrowRight')) moveRight += 1;
-  if (keys.has('KeyA') || keys.has('ArrowLeft')) moveRight -= 1;
-  if (moveForward !== 0 && moveRight !== 0) {
-    moveForward *= Math.SQRT1_2;
-    moveRight *= Math.SQRT1_2;
-  }
+  const move = computeMoveVector();
+  const moveForward = move.f;
+  const moveRight = move.r;
 
   let x = self.render.x;
   let z = self.render.z;

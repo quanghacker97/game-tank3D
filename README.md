@@ -16,15 +16,23 @@ Mở `http://localhost:3000` trên nhiều tab/máy khác nhau (cùng mạng, ho
 
 ## Cách chơi
 
+**Máy tính (bàn phím + chuột):**
+
 - **Chuột** (click vào màn hình để khoá con trỏ): xoay xe + tháp pháo + camera — thân xe và nòng súng luôn cùng hướng, súng bắn đúng hướng xe đang lái nên không cần căn chỉnh hai trục riêng biệt.
 - **W / S**: tiến / lùi theo hướng đang ngắm
 - **A / D**: né/di chuyển ngang trái phải (giữ nguyên hướng ngắm)
 - **Click chuột trái / Space**: bắn (có thời gian hồi chiêu)
-- **Esc**: thoát khoá con trỏ chuột
+- **Tab**: khoá mục tiêu gần nhất (hỗ trợ ngắm) — tháp pháo + camera sẽ tự bám theo mục tiêu đang khoá (giới hạn tốc độ xoay, không phải auto-aim tuyệt đối); nhấn Tab lần nữa để mở khoá.
+- **Esc**: thoát khoá con trỏ chuột (cần thiết trước khi bấm nút "☰ Menu" — khi con trỏ đang khoá, mọi thao tác chuột đều đổ vào canvas theo đúng chuẩn Pointer Lock nên nút Menu tự ẩn đi trong lúc ngắm).
+
+**Điện thoại / máy tính bảng (cảm ứng):** giao diện tự nhận diện thiết bị cảm ứng và hiện bộ điều khiển ảo — không cần bàn phím/chuột:
+
+- **Cần điều khiển ảo** (góc dưới trái): kéo để di chuyển, độ nghiêng càng lớn xe càng chạy nhanh (analog, không chỉ 8 hướng).
+- **Vuốt bất kỳ đâu trên màn hình 3D** (trừ vùng cần điều khiển/nút bấm): xoay xe + tháp pháo + camera, giống kéo chuột — có thể vuốt bằng ngón khác trong khi ngón kia vẫn giữ cần điều khiển.
+- **Nút 🔥** (góc dưới phải): giữ để bắn liên tục.
+- **Nút 🎯** (cạnh nút bắn): khoá/mở khoá mục tiêu gần nhất — rất hữu ích trên di động vì vừa lái vừa ngắm chính xác bằng ngón tay khó hơn chuột.
 
 Hạ gục người chơi khác để ghi điểm; bạn sẽ hồi sinh sau 3 giây ở một điểm spawn ngẫu nhiên. Bảng xếp hạng (góc trên trái) và kill-feed (góc trên phải) cập nhật theo thời gian thực.
-
-- **Tab**: khoá mục tiêu gần nhất (hỗ trợ ngắm) — tháp pháo + camera sẽ tự bám theo mục tiêu đang khoá (giới hạn tốc độ xoay, không phải auto-aim tuyệt đối); nhấn Tab lần nữa để mở khoá.
 
 ## Chế độ chơi
 

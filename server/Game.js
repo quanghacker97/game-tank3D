@@ -44,6 +44,14 @@ function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
 }
 
+// Per-axis analog input (keyboard sends exactly -1/0/1, a touch joystick
+// sends a continuous value) — clamp defensively, vector magnitude is
+// clamped separately in tick() so a diagonal can't exceed full speed.
+function clampAxis(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? clamp(n, -1, 1) : 0;
+}
+
 function clampLevel(v) {
   const n = Math.round(Number(v));
   if (!Number.isFinite(n)) return 0;
@@ -132,7 +140,7 @@ class Game {
       stats,
       lastFireTime: 0,
       deathTime: 0,
-      input: { forward: false, back: false, left: false, right: false, turretRot: spawn.rotY, firing: false },
+      input: { moveForward: 0, moveRight: 0, turretRot: spawn.rotY, firing: false },
     };
     this.players.set(id, player);
     this.events.push({ type: 'join', id, name: player.name });
@@ -162,7 +170,7 @@ class Game {
       stats,
       lastFireTime: 0,
       deathTime: 0,
-      input: { forward: false, back: false, left: false, right: false, turretRot: spawn.rotY, firing: false },
+      input: { moveForward: 0, moveRight: 0, turretRot: spawn.rotY, firing: false },
       ai: { lastX: spawn.x, lastZ: spawn.z, stuckTicks: 0, avoidUntil: 0, avoidSign: 1 },
     };
     this.players.set(id, bot);
@@ -179,10 +187,8 @@ class Game {
   setInput(id, input) {
     const player = this.players.get(id);
     if (!player || player.isBot || !input) return;
-    player.input.forward = !!input.forward;
-    player.input.back = !!input.back;
-    player.input.left = !!input.left;
-    player.input.right = !!input.right;
+    player.input.moveForward = clampAxis(input.moveForward);
+    player.input.moveRight = clampAxis(input.moveRight);
     player.input.firing = !!input.firing;
     if (typeof input.turretRot === 'number' && Number.isFinite(input.turretRot)) {
       player.input.turretRot = input.turretRot;
@@ -203,10 +209,8 @@ class Game {
   _updateBotAI(bot, now, dt) {
     const target = this._primaryHuman();
     if (!target || !target.alive) {
-      bot.input.forward = false;
-      bot.input.back = false;
-      bot.input.left = false;
-      bot.input.right = false;
+      bot.input.moveForward = 0;
+      bot.input.moveRight = 0;
       bot.input.firing = false;
       return;
     }
@@ -218,7 +222,7 @@ class Game {
 
     // Simple stuck detection -> temporary steer offset to route around cover.
     const moved = Math.hypot(bot.x - bot.ai.lastX, bot.z - bot.ai.lastZ);
-    if (bot.input.forward && moved < 0.05) bot.ai.stuckTicks++;
+    if (bot.input.moveForward > 0 && moved < 0.05) bot.ai.stuckTicks++;
     else bot.ai.stuckTicks = 0;
     bot.ai.lastX = bot.x;
     bot.ai.lastZ = bot.z;
@@ -235,10 +239,8 @@ class Game {
 
     const tooClose = dist < 10;
     const tooFar = dist > bot.stats.engageRange * 0.7;
-    bot.input.forward = tooFar;
-    bot.input.back = tooClose;
-    bot.input.left = false;
-    bot.input.right = false;
+    bot.input.moveForward = tooFar ? 1 : tooClose ? -1 : 0;
+    bot.input.moveRight = 0;
 
     const aligned = Math.abs(angleDiff(bot.input.turretRot, desiredAngle)) < 0.12;
     bot.input.firing = dist <= bot.stats.engageRange && aligned;
@@ -296,15 +298,12 @@ class Game {
       player.bodyRot = input.turretRot;
       player.turretRot = input.turretRot;
 
-      let moveForward = 0;
-      if (input.forward) moveForward += 1;
-      if (input.back) moveForward -= 1;
-      let moveRight = 0;
-      if (input.right) moveRight += 1;
-      if (input.left) moveRight -= 1;
-      if (moveForward !== 0 && moveRight !== 0) {
-        moveForward *= Math.SQRT1_2;
-        moveRight *= Math.SQRT1_2;
+      let moveForward = input.moveForward;
+      let moveRight = input.moveRight;
+      const moveLen = Math.hypot(moveForward, moveRight);
+      if (moveLen > 1) {
+        moveForward /= moveLen;
+        moveRight /= moveLen;
       }
 
       if (moveForward !== 0 || moveRight !== 0) {

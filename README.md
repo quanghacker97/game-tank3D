@@ -28,7 +28,7 @@ Mở `http://localhost:3000` trên nhiều tab/máy khác nhau (cùng mạng, ho
 **Điện thoại / máy tính bảng (cảm ứng):** giao diện tự nhận diện thiết bị cảm ứng và hiện bộ điều khiển ảo — không cần bàn phím/chuột:
 
 - **Cần điều khiển ảo** (góc dưới trái): kéo để di chuyển, độ nghiêng càng lớn xe càng chạy nhanh (analog, không chỉ 8 hướng).
-- **Vuốt bất kỳ đâu trên màn hình 3D** (trừ vùng cần điều khiển/nút bấm): xoay xe + tháp pháo + camera, giống kéo chuột — có thể vuốt bằng ngón khác trong khi ngón kia vẫn giữ cần điều khiển.
+- **Vuốt ở nửa phải màn hình**: xoay xe + tháp pháo + camera, giống kéo chuột — dùng ngón tay còn lại trong khi ngón kia vẫn giữ cần điều khiển bên trái. Nửa trái chỉ dành cho di chuyển (không nhận thao tác ngắm), để tránh việc tay cầm máy chạm nhầm làm súng tự xoay khi đang lái.
 - **Nút 🔥** (góc dưới phải): giữ để bắn liên tục.
 - **Nút 🎯** (cạnh nút bắn): khoá/mở khoá mục tiêu gần nhất — rất hữu ích trên di động vì vừa lái vừa ngắm chính xác bằng ngón tay khó hơn chuột.
 

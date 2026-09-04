@@ -1056,7 +1056,11 @@ function setupTouchControls() {
     'touchstart',
     (e) => {
       for (const t of e.changedTouches) {
-        if (lookTouchId === null) {
+        // Only the right half of the screen aims. The joystick already
+        // claims its own touches via DOM hit-testing, but without this a
+        // thumb/palm resting on the LEFT side while operating the joystick
+        // could still be picked up here and spuriously spin the turret.
+        if (lookTouchId === null && t.clientX >= window.innerWidth / 2) {
           lookTouchId = t.identifier;
           lookLastX = t.clientX;
           lookLastY = t.clientY;

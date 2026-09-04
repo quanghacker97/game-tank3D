@@ -18,7 +18,7 @@ Mở `http://localhost:3000` trên nhiều tab/máy khác nhau (cùng mạng, ho
 
 **Máy tính (bàn phím + chuột):**
 
-- **Chuột** (click vào màn hình để khoá con trỏ): xoay xe + tháp pháo + camera — thân xe và nòng súng luôn cùng hướng, súng bắn đúng hướng xe đang lái nên không cần căn chỉnh hai trục riêng biệt.
+- **Chuột** (click vào màn hình để khoá con trỏ): xoay xe + tháp pháo + camera **theo chiều ngang (trái/phải)** — thân xe và nòng súng luôn cùng hướng, súng bắn đúng hướng xe đang lái nên không cần căn chỉnh hai trục riêng biệt. Góc nhìn lên/xuống bị khoá cố định (không tự do nhìn dọc) để tránh camera loạn hướng khó điều khiển.
 - **W / S**: tiến / lùi theo hướng đang ngắm
 - **A / D**: né/di chuyển ngang trái phải (giữ nguyên hướng ngắm)
 - **Click chuột trái / Space**: bắn (có thời gian hồi chiêu)
@@ -28,7 +28,7 @@ Mở `http://localhost:3000` trên nhiều tab/máy khác nhau (cùng mạng, ho
 **Điện thoại / máy tính bảng (cảm ứng):** giao diện tự nhận diện thiết bị cảm ứng và hiện bộ điều khiển ảo — không cần bàn phím/chuột:
 
 - **Cần điều khiển ảo** (góc dưới trái): kéo để di chuyển, độ nghiêng càng lớn xe càng chạy nhanh (analog, không chỉ 8 hướng).
-- **Vuốt ở nửa phải màn hình**: xoay xe + tháp pháo + camera, giống kéo chuột — dùng ngón tay còn lại trong khi ngón kia vẫn giữ cần điều khiển bên trái. Nửa trái chỉ dành cho di chuyển (không nhận thao tác ngắm), để tránh việc tay cầm máy chạm nhầm làm súng tự xoay khi đang lái.
+- **Vuốt ở nửa phải màn hình**: xoay xe + tháp pháo + camera **theo chiều ngang (trái/phải)** — giống kéo chuột, dùng ngón tay còn lại trong khi ngón kia vẫn giữ cần điều khiển bên trái. Vuốt lên/xuống không có tác dụng (khoá góc nhìn dọc) để tránh camera loạn khó điều khiển. Nửa trái màn hình chỉ dành cho di chuyển (không nhận thao tác ngắm), để tránh việc tay cầm máy chạm nhầm làm súng tự xoay khi đang lái.
 - **Nút 🔥** (góc dưới phải): giữ để bắn liên tục.
 - **Nút 🎯** (cạnh nút bắn): khoá/mở khoá mục tiêu gần nhất — rất hữu ích trên di động vì vừa lái vừa ngắm chính xác bằng ngón tay khó hơn chuột.
 

@@ -8,8 +8,6 @@ const RESPAWN_DELAY_MS = 3000;
 const MOUSE_SENSITIVITY = 0.0022;
 const TOUCH_LOOK_SENSITIVITY = 0.0026;
 const JOYSTICK_RADIUS = 48; // px, matches #touchJoystickBase knob travel
-const PITCH_MIN = 0.05;
-const PITCH_MAX = 0.9;
 const CAM_DIST = 11;
 const CAM_BASE_HEIGHT = 3;
 const LOCK_TURN_RATE = 3.0; // rad/sec turret tracking speed while target-locked
@@ -937,7 +935,10 @@ const isTouchDevice = window.matchMedia('(pointer: coarse)').matches || navigato
 
 const keys = new Set();
 let turretYaw = 0;
-let camPitch = 0.3;
+// Fixed, not adjustable by mouse/touch: aiming is left/right (yaw) only —
+// a free-look vertical axis on top of that made the camera easy to lose
+// control of, especially on a touch drag.
+const camPitch = 0.3;
 let firing = false;
 let pointerLocked = false;
 const joystickVec = { x: 0, y: 0 }; // x = strafe right, y = forward, both -1..1
@@ -975,9 +976,9 @@ if (!isTouchDevice) {
 
   document.addEventListener('mousemove', (e) => {
     if (!pointerLocked) return;
+    // Yaw only — camPitch is fixed (see its declaration) so aiming is a
+    // single left/right axis, not a free-look that's easy to lose control of.
     if (!lockedTargetId) turretYaw += e.movementX * MOUSE_SENSITIVITY;
-    camPitch -= e.movementY * MOUSE_SENSITIVITY * 0.8;
-    camPitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, camPitch));
   });
 
   canvas.addEventListener('mousedown', (e) => {
@@ -997,7 +998,6 @@ let joystickTouchId = null;
 let joystickCenter = { x: 0, y: 0 };
 let lookTouchId = null;
 let lookLastX = 0;
-let lookLastY = 0;
 
 function setupTouchControls() {
   if (!isTouchDevice) return;
@@ -1063,7 +1063,6 @@ function setupTouchControls() {
         if (lookTouchId === null && t.clientX >= window.innerWidth / 2) {
           lookTouchId = t.identifier;
           lookLastX = t.clientX;
-          lookLastY = t.clientY;
         }
       }
     },
@@ -1074,13 +1073,11 @@ function setupTouchControls() {
     (e) => {
       for (const t of e.changedTouches) {
         if (t.identifier !== lookTouchId) continue;
+        // Yaw only — camPitch is fixed (see its declaration) so aiming is a
+        // single left/right axis, not a free-look that's easy to lose control of.
         const dx = t.clientX - lookLastX;
-        const dy = t.clientY - lookLastY;
         lookLastX = t.clientX;
-        lookLastY = t.clientY;
         if (!lockedTargetId) turretYaw += dx * TOUCH_LOOK_SENSITIVITY;
-        camPitch -= dy * TOUCH_LOOK_SENSITIVITY * 0.8;
-        camPitch = Math.max(PITCH_MIN, Math.min(PITCH_MAX, camPitch));
       }
       e.preventDefault();
     },

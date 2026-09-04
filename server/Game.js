@@ -69,7 +69,6 @@ function statsFromLoadout(loadout) {
     damage: UPGRADES.power[l.power],
     maxHp: UPGRADES.defense[l.defense],
     moveSpeed: UPGRADES.agilityMove[l.agility],
-    turnSpeed: UPGRADES.agilityTurn[l.agility],
     fireCooldown: UPGRADES.rate[l.rate],
     levels: l,
   };
@@ -83,7 +82,6 @@ function statsFromBotTier(tierName) {
     moveSpeed: tier.moveSpeed,
     turnSpeed: tier.turnSpeed,
     fireCooldown: tier.fireCooldown,
-    aimError: tier.aimError,
     engageRange: tier.engageRange,
   };
 }
@@ -165,7 +163,7 @@ class Game {
       lastFireTime: 0,
       deathTime: 0,
       input: { forward: false, back: false, left: false, right: false, turretRot: spawn.rotY, firing: false },
-      ai: { lastX: spawn.x, lastZ: spawn.z, stuckTicks: 0, avoidUntil: 0, avoidSign: 1, aimNoise: 0 },
+      ai: { lastX: spawn.x, lastZ: spawn.z, stuckTicks: 0, avoidUntil: 0, avoidSign: 1 },
     };
     this.players.set(id, bot);
     return bot;
@@ -198,7 +196,11 @@ class Game {
     return null;
   }
 
-  _updateBotAI(bot, now) {
+  // Bots share the same "hull always faces where it's aiming" model as
+  // players (see tick()), but unlike a mouse-driven human they can't snap
+  // instantly — their aim/facing turns at a capped rate (bot.stats.turnSpeed),
+  // which alone is what makes them feel less than perfectly accurate.
+  _updateBotAI(bot, now, dt) {
     const target = this._primaryHuman();
     if (!target || !target.alive) {
       bot.input.forward = false;
@@ -226,20 +228,20 @@ class Game {
       bot.ai.stuckTicks = 0;
     }
     const steerAngle = now < bot.ai.avoidUntil ? desiredAngle + bot.ai.avoidSign * 1.4 : desiredAngle;
-    const steerDiff = angleDiff(bot.bodyRot, steerAngle);
-    bot.input.left = steerDiff < -0.05;
-    bot.input.right = steerDiff > 0.05;
+
+    const maxStep = bot.stats.turnSpeed * dt;
+    const step = clamp(angleDiff(bot.turretRot, steerAngle), -maxStep, maxStep);
+    bot.input.turretRot = bot.turretRot + step;
 
     const tooClose = dist < 10;
     const tooFar = dist > bot.stats.engageRange * 0.7;
     bot.input.forward = tooFar;
     bot.input.back = tooClose;
+    bot.input.left = false;
+    bot.input.right = false;
 
-    bot.ai.aimNoise = bot.ai.aimNoise * 0.9 + (Math.random() - 0.5) * bot.stats.aimError * 0.2;
-    bot.input.turretRot = desiredAngle + bot.ai.aimNoise;
-
-    const turretAligned = Math.abs(angleDiff(bot.turretRot, desiredAngle)) < 0.12;
-    bot.input.firing = dist <= bot.stats.engageRange && turretAligned;
+    const aligned = Math.abs(angleDiff(bot.input.turretRot, desiredAngle)) < 0.12;
+    bot.input.firing = dist <= bot.stats.engageRange && aligned;
   }
 
   _spawnBullet(owner) {
@@ -266,7 +268,7 @@ class Game {
     const now = Date.now();
 
     for (const player of this.players.values()) {
-      if (player.isBot && player.alive) this._updateBotAI(player, now);
+      if (player.isBot && player.alive) this._updateBotAI(player, now, dt);
 
       if (!player.alive) {
         if (!player.isBot && this.mode === 'arena' && now - player.deathTime >= RESPAWN_DELAY_MS) {
@@ -287,16 +289,31 @@ class Game {
 
       const { input } = player;
 
-      if (input.left) player.bodyRot -= player.stats.turnSpeed * dt;
-      if (input.right) player.bodyRot += player.stats.turnSpeed * dt;
+      // Hull always faces the same way the turret aims (mouse-driven for
+      // humans, rate-limited by _updateBotAI for bots) — movement below is
+      // relative to this single facing direction, so the gun always points
+      // the way you're actually driving.
+      player.bodyRot = input.turretRot;
+      player.turretRot = input.turretRot;
 
-      let moveDir = 0;
-      if (input.forward) moveDir += 1;
-      if (input.back) moveDir -= 1;
+      let moveForward = 0;
+      if (input.forward) moveForward += 1;
+      if (input.back) moveForward -= 1;
+      let moveRight = 0;
+      if (input.right) moveRight += 1;
+      if (input.left) moveRight -= 1;
+      if (moveForward !== 0 && moveRight !== 0) {
+        moveForward *= Math.SQRT1_2;
+        moveRight *= Math.SQRT1_2;
+      }
 
-      if (moveDir !== 0) {
-        const dx = Math.sin(player.bodyRot) * moveDir * player.stats.moveSpeed * dt;
-        const dz = Math.cos(player.bodyRot) * moveDir * player.stats.moveSpeed * dt;
+      if (moveForward !== 0 || moveRight !== 0) {
+        const fx = Math.sin(player.bodyRot);
+        const fz = Math.cos(player.bodyRot);
+        const rx = Math.sin(player.bodyRot + Math.PI / 2);
+        const rz = Math.cos(player.bodyRot + Math.PI / 2);
+        const dx = (fx * moveForward + rx * moveRight) * player.stats.moveSpeed * dt;
+        const dz = (fz * moveForward + rz * moveRight) * player.stats.moveSpeed * dt;
 
         const nx = clamp(player.x + dx, -ARENA_HALF_SIZE + TANK_RADIUS, ARENA_HALF_SIZE - TANK_RADIUS);
         if (!isBlockedByObstacle(nx, player.z, TANK_RADIUS)) player.x = nx;
@@ -304,8 +321,6 @@ class Game {
         const nz = clamp(player.z + dz, -ARENA_HALF_SIZE + TANK_RADIUS, ARENA_HALF_SIZE - TANK_RADIUS);
         if (!isBlockedByObstacle(player.x, nz, TANK_RADIUS)) player.z = nz;
       }
-
-      player.turretRot = input.turretRot;
 
       if (input.firing && now - player.lastFireTime >= player.stats.fireCooldown) {
         player.lastFireTime = now;

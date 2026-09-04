@@ -55,11 +55,13 @@ const PLAYER_COLORS = [
 
 const MAX_UPGRADE_LEVEL = 5;
 
+// Turning (both turret and hull, which always face the same way — see
+// Game.js) tracks the mouse directly and isn't gated by an upgrade; only
+// move speed and the other three tracks are purchasable.
 const UPGRADES = {
   power: [25, 29, 33, 37, 41, 45], // bullet damage
   defense: [100, 116, 132, 148, 164, 180], // max HP
   agilityMove: [14, 15.2, 16.4, 17.6, 18.8, 20], // move speed (units/sec)
-  agilityTurn: [2.4, 2.6, 2.8, 3.0, 3.2, 3.4], // turn speed (rad/sec)
   rate: [550, 510, 470, 430, 390, 350], // fire cooldown ms (lower = faster)
 };
 
@@ -70,6 +72,9 @@ const UPGRADE_COST = [50, 120, 220, 360, 550];
 // Campaign ("vượt ải"): solo player vs. AI-controlled tanks.
 // ---------------------------------------------------------------------
 
+// turnSpeed rate-limits how fast a bot's aim/hull can swing onto target —
+// this alone (plus fireCooldown/moveSpeed/damage) is what makes a bot feel
+// less than perfectly accurate, so there's no separate aim-error knob.
 const BOT_TIERS = {
   easy: {
     maxHp: 80,
@@ -77,7 +82,6 @@ const BOT_TIERS = {
     moveSpeed: 9,
     turnSpeed: 1.6,
     fireCooldown: 950,
-    aimError: 0.35,
     engageRange: 42,
     color: 0xb0b0b0,
   },
@@ -85,9 +89,8 @@ const BOT_TIERS = {
     maxHp: 110,
     damage: 20,
     moveSpeed: 12,
-    turnSpeed: 2.0,
+    turnSpeed: 2.2,
     fireCooldown: 750,
-    aimError: 0.2,
     engageRange: 46,
     color: 0xcc6633,
   },
@@ -95,9 +98,8 @@ const BOT_TIERS = {
     maxHp: 150,
     damage: 26,
     moveSpeed: 14.5,
-    turnSpeed: 2.4,
+    turnSpeed: 3.0,
     fireCooldown: 580,
-    aimError: 0.1,
     engageRange: 50,
     color: 0x8b1a1a,
   },

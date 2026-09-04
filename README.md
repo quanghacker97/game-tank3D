@@ -16,9 +16,9 @@ Mở `http://localhost:3000` trên nhiều tab/máy khác nhau (cùng mạng, ho
 
 ## Cách chơi
 
-- **W / S**: tiến / lùi theo hướng thân xe tăng
-- **A / D**: xoay thân xe tăng
-- **Chuột** (click vào màn hình để khoá con trỏ): xoay tháp pháo + camera
+- **Chuột** (click vào màn hình để khoá con trỏ): xoay xe + tháp pháo + camera — thân xe và nòng súng luôn cùng hướng, súng bắn đúng hướng xe đang lái nên không cần căn chỉnh hai trục riêng biệt.
+- **W / S**: tiến / lùi theo hướng đang ngắm
+- **A / D**: né/di chuyển ngang trái phải (giữ nguyên hướng ngắm)
 - **Click chuột trái / Space**: bắn (có thời gian hồi chiêu)
 - **Esc**: thoát khoá con trỏ chuột
 
@@ -30,7 +30,7 @@ Hạ gục người chơi khác để ghi điểm; bạn sẽ hồi sinh sau 3 g
 
 - **⚔️ Đấu trường (PvP)**: nhiều người chơi đấu tự do trong cùng một phòng, hạ gục nhau để tính điểm, hồi sinh sau khi chết. Không có kẻ địch AI, không kiếm được Xu ở chế độ này.
 - **🎯 Chiến dịch (Vượt ải, PvE)**: chơi một mình, đấu với xe tăng điều khiển bởi AI theo từng ải (8 ải, độ khó tăng dần). Hạ hết địch trong ải để **nhận thưởng Xu** và mở khoá ải tiếp theo; nếu xe của bạn bị hạ, ải thất bại và có thể chơi lại. AI địch sẽ đuổi theo, né chướng ngại vật cơ bản, và ngắm bắn với độ chính xác tuỳ độ khó (Dễ/Vừa/Khó).
-- **🔧 Gara nâng cấp**: dùng Xu kiếm được từ Chiến dịch để nâng cấp 4 chỉ số của xe tăng (mỗi chỉ số 5 cấp): **Sức mạnh** (sát thương đạn), **Phòng thủ** (máu tối đa), **Nhanh nhẹn** (tốc độ di chuyển + xoay thân), **Tốc độ bắn** (giảm thời gian hồi chiêu). Trang bị đã nâng cấp áp dụng ở cả hai chế độ.
+- **🔧 Gara nâng cấp**: dùng Xu kiếm được từ Chiến dịch để nâng cấp 4 chỉ số của xe tăng (mỗi chỉ số 5 cấp): **Sức mạnh** (sát thương đạn), **Phòng thủ** (máu tối đa), **Nhanh nhẹn** (tốc độ di chuyển), **Tốc độ bắn** (giảm thời gian hồi chiêu). Trang bị đã nâng cấp áp dụng ở cả hai chế độ.
 
 Tiến trình (tên, Xu, cấp trang bị, ải đã mở khoá) được lưu trong `localStorage` của trình duyệt — không cần đăng nhập, nhưng cũng không đồng bộ giữa các thiết bị/trình duyệt khác nhau, và không có xác thực server nên đây chỉ là kinh tế trong game mang tính giải trí (không phải tiền thật, không chống gian lận tuyệt đối cho PvP).
 

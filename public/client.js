@@ -17,7 +17,6 @@ const UPGRADES = {
   power: [25, 29, 33, 37, 41, 45],
   defense: [100, 116, 132, 148, 164, 180],
   agilityMove: [14, 15.2, 16.4, 17.6, 18.8, 20],
-  agilityTurn: [2.4, 2.6, 2.8, 3.0, 3.2, 3.4],
   rate: [550, 510, 470, 430, 390, 350],
 };
 const UPGRADE_COST = [50, 120, 220, 360, 550];
@@ -129,8 +128,24 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x86b4e0);
-scene.fog = new THREE.Fog(0x86b4e0, 60, 150);
+
+function createSkyTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 2;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, '#3f7fd6');
+  grad.addColorStop(0.45, '#7fb3e8');
+  grad.addColorStop(0.82, '#cfe6f5');
+  grad.addColorStop(1, '#eef6fb');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 2, 256);
+  return new THREE.CanvasTexture(canvas);
+}
+
+scene.background = createSkyTexture();
+scene.fog = new THREE.Fog(0xcfe6f5, 70, 165);
 
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 500);
 camera.position.set(0, 20, 20);
@@ -141,7 +156,7 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-const hemi = new THREE.HemisphereLight(0xffffff, 0x445566, 0.9);
+const hemi = new THREE.HemisphereLight(0x9fc7ec, 0x3c4a2e, 0.95);
 scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 1.1);
 sun.position.set(60, 90, 30);
@@ -158,19 +173,84 @@ let arenaHalfSize = 60;
 let obstacles = [];
 let worldBuilt = false;
 
+function createGrassTexture() {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#4d7a3a';
+  ctx.fillRect(0, 0, size, size);
+  for (let i = 0; i < 4000; i++) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const light = Math.random() < 0.5;
+    ctx.fillStyle = light ? 'rgba(120,165,80,0.22)' : 'rgba(40,70,30,0.22)';
+    const s = 1 + Math.random() * 2;
+    ctx.fillRect(x, y, s, s);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(arenaHalfSize / 3, arenaHalfSize / 3);
+  return tex;
+}
+
 function buildGround() {
-  const geo = new THREE.PlaneGeometry(arenaHalfSize * 2 + 40, arenaHalfSize * 2 + 40, 20, 20);
-  const mat = new THREE.MeshStandardMaterial({ color: 0x4d7a3a, roughness: 1 });
+  const geo = new THREE.PlaneGeometry(arenaHalfSize * 2 + 60, arenaHalfSize * 2 + 60, 20, 20);
+  const mat = new THREE.MeshStandardMaterial({ map: createGrassTexture(), roughness: 1 });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.rotation.x = -Math.PI / 2;
   mesh.receiveShadow = true;
   scene.add(mesh);
+}
 
-  const grid = new THREE.GridHelper(arenaHalfSize * 2, arenaHalfSize / 5, 0x2a4a20, 0x2a4a20);
-  grid.position.y = 0.01;
-  grid.material.opacity = 0.35;
-  grid.material.transparent = true;
-  scene.add(grid);
+function buildProps() {
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x7c8288, roughness: 1, flatShading: true });
+  const bushMat = new THREE.MeshStandardMaterial({ color: 0x3f6b2e, roughness: 1, flatShading: true });
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3626, roughness: 1 });
+
+  function scatterRing(count, rMin, rMax, place) {
+    for (let i = 0; i < count; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const r = rMin + Math.random() * (rMax - rMin);
+      place(Math.sin(ang) * r, Math.cos(ang) * r);
+    }
+  }
+
+  scatterRing(18, arenaHalfSize - 9, arenaHalfSize - 3, (x, z) => {
+    const s = 0.6 + Math.random() * 1.2;
+    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(s, 0), rockMat);
+    rock.position.set(x, s * 0.45, z);
+    rock.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+    rock.castShadow = true;
+    rock.receiveShadow = true;
+    scene.add(rock);
+  });
+
+  scatterRing(22, arenaHalfSize - 15, arenaHalfSize - 5, (x, z) => {
+    const s = 0.8 + Math.random() * 0.6;
+    const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(s, 0), bushMat);
+    bush.position.set(x, s * 0.7, z);
+    bush.rotation.y = Math.random() * Math.PI;
+    bush.castShadow = true;
+    bush.receiveShadow = true;
+    scene.add(bush);
+  });
+
+  // Dead trees scattered just past the boundary wall, purely as a backdrop.
+  scatterRing(16, arenaHalfSize + 6, arenaHalfSize + 32, (x, z) => {
+    const h = 4 + Math.random() * 4;
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.35, h, 6), trunkMat);
+    trunk.position.set(x, h / 2, z);
+    trunk.castShadow = true;
+    scene.add(trunk);
+    const branch = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, h * 0.55, 5), trunkMat);
+    branch.position.set(x, h * 0.8, z);
+    branch.rotation.z = Math.PI / 3.2;
+    branch.rotation.y = Math.random() * Math.PI;
+    scene.add(branch);
+  });
 }
 
 function buildBoundaryWalls() {
@@ -194,13 +274,20 @@ function buildBoundaryWalls() {
 }
 
 function buildObstacles(list) {
-  const mat = new THREE.MeshStandardMaterial({ color: 0x8a7a5c, roughness: 0.95 });
+  const baseMat = new THREE.MeshStandardMaterial({ color: 0x8a7a5c, roughness: 0.95 });
+  const capMat = new THREE.MeshStandardMaterial({ color: 0x6b5d45, roughness: 0.9 });
   for (const o of list) {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(o.w, o.h, o.d), mat);
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(o.w, o.h, o.d), baseMat);
     mesh.position.set(o.x, o.h / 2, o.z);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     scene.add(mesh);
+
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(o.w + 0.3, 0.3, o.d + 0.3), capMat);
+    cap.position.set(o.x, o.h + 0.15, o.z);
+    cap.castShadow = true;
+    cap.receiveShadow = true;
+    scene.add(cap);
   }
 }
 
@@ -208,33 +295,99 @@ function buildObstacles(list) {
 function createTankMesh(color) {
   const tankGroup = new THREE.Group();
 
-  const bodyPivot = new THREE.Group();
-  const bodyMat = new THREE.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.15 });
-  const bodyMesh = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.4, 4.6), bodyMat);
-  bodyMesh.position.y = 1.0;
-  bodyMesh.castShadow = true;
-  bodyMesh.receiveShadow = true;
-  bodyPivot.add(bodyMesh);
+  const baseColor = new THREE.Color(color);
+  const turretColor = baseColor.clone().multiplyScalar(0.85);
+  const trimMat = new THREE.MeshStandardMaterial({ color: 0x1c1f22, roughness: 0.9, metalness: 0.2 });
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111315, roughness: 0.95 });
 
-  const trackMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 1 });
+  const bodyPivot = new THREE.Group();
+  const hullMat = new THREE.MeshStandardMaterial({ color: baseColor, roughness: 0.6, metalness: 0.15 });
+
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(3.3, 1.0, 5.0), hullMat);
+  hull.position.y = 0.75;
+  hull.castShadow = true;
+  hull.receiveShadow = true;
+  bodyPivot.add(hull);
+
+  const glacis = new THREE.Mesh(new THREE.BoxGeometry(2.85, 1.0, 1.6), hullMat);
+  glacis.rotation.x = -0.45;
+  glacis.position.set(0, 1.05, 2.0);
+  glacis.castShadow = true;
+  bodyPivot.add(glacis);
+
+  const rearDeck = new THREE.Mesh(new THREE.BoxGeometry(2.9, 0.4, 1.3), hullMat);
+  rearDeck.position.set(0, 1.35, -2.0);
+  rearDeck.castShadow = true;
+  bodyPivot.add(rearDeck);
+
   for (const side of [-1, 1]) {
-    const track = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.0, 5.0), trackMat);
-    track.position.set(side * 1.75, 0.6, 0);
+    const skirt = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.85, 4.6), trimMat);
+    skirt.position.set(side * 1.78, 0.85, 0);
+    bodyPivot.add(skirt);
+
+    const track = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.85, 4.0), trimMat);
+    track.position.set(side * 1.85, 0.5, 0);
     track.castShadow = true;
     bodyPivot.add(track);
+
+    for (const zEnd of [-2.0, 2.0]) {
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.43, 0.43, 0.65, 10), trimMat);
+      cap.rotation.z = Math.PI / 2;
+      cap.position.set(side * 1.85, 0.5, zEnd);
+      cap.castShadow = true;
+      bodyPivot.add(cap);
+    }
+
+    for (let i = 0; i < 5; i++) {
+      const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.72, 10), wheelMat);
+      wheel.rotation.z = Math.PI / 2;
+      wheel.position.set(side * 1.85, 0.45, -1.8 + i * 0.9);
+      bodyPivot.add(wheel);
+    }
   }
 
   const turretPivot = new THREE.Group();
-  const turretMat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.25 });
-  const turretMesh = new THREE.Mesh(new THREE.CylinderGeometry(1.3, 1.5, 1.2, 16), turretMat);
-  turretMesh.position.y = 1.9;
+  const turretMat = new THREE.MeshStandardMaterial({ color: turretColor, roughness: 0.5, metalness: 0.25 });
+
+  const turretRing = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.6, 0.22, 16), trimMat);
+  turretRing.position.y = 1.28;
+  turretRing.castShadow = true;
+  turretPivot.add(turretRing);
+
+  const turretMesh = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.5, 1.15, 16), turretMat);
+  turretMesh.position.y = 1.85;
   turretMesh.castShadow = true;
   turretPivot.add(turretMesh);
 
-  const barrelMesh = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.35, 3.4), turretMat);
-  barrelMesh.position.set(0, 1.9, 2.2);
+  const bustle = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.85, 0.9), turretMat);
+  bustle.position.set(0, 1.85, -0.85);
+  bustle.castShadow = true;
+  turretPivot.add(bustle);
+
+  const mantlet = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.95, 0.5), turretMat);
+  mantlet.position.set(0, 1.9, 1.0);
+  mantlet.castShadow = true;
+  turretPivot.add(mantlet);
+
+  const barrelMesh = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 3.6), trimMat);
+  barrelMesh.position.set(0, 1.9, 2.0);
   barrelMesh.castShadow = true;
   turretPivot.add(barrelMesh);
+
+  const muzzleBrake = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.5, 10), trimMat);
+  muzzleBrake.rotation.x = Math.PI / 2;
+  muzzleBrake.position.set(0, 1.9, 3.7);
+  muzzleBrake.castShadow = true;
+  turretPivot.add(muzzleBrake);
+
+  const hatch = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.2, 10), trimMat);
+  hatch.position.set(0.3, 2.5, -0.5);
+  turretPivot.add(hatch);
+
+  const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 2.0, 4), trimMat);
+  antenna.position.set(0.75, 3.0, -0.9);
+  antenna.rotation.z = 0.18;
+  turretPivot.add(antenna);
 
   tankGroup.add(bodyPivot);
   tankGroup.add(turretPivot);
@@ -592,6 +745,7 @@ socket.on('init', (data) => {
     buildGround();
     buildBoundaryWalls();
     buildObstacles(obstacles);
+    buildProps();
     worldBuilt = true;
   }
 
@@ -782,7 +936,6 @@ function currentLoadoutStats() {
   const u = profile.upgrades;
   return {
     moveSpeed: UPGRADES.agilityMove[u.agility],
-    turnSpeed: UPGRADES.agilityTurn[u.agility],
     fireCooldown: UPGRADES.rate[u.rate],
   };
 }
@@ -807,19 +960,31 @@ function updateLocalPrediction(dt) {
   const stats = currentLoadoutStats();
   fireCooldownLocal = stats.fireCooldown;
 
-  let bodyRot = self.render.bodyRot;
-  if (keys.has('KeyA') || keys.has('ArrowLeft')) bodyRot -= stats.turnSpeed * dt;
-  if (keys.has('KeyD') || keys.has('ArrowRight')) bodyRot += stats.turnSpeed * dt;
+  // Hull always faces the same way the turret aims (mouse-driven) — WASD
+  // moves relative to that single facing direction: W/S forward/back,
+  // A/D strafe left/right. This mirrors server/Game.js exactly.
+  const bodyRot = turretYaw;
 
-  let moveDir = 0;
-  if (keys.has('KeyW') || keys.has('ArrowUp')) moveDir += 1;
-  if (keys.has('KeyS') || keys.has('ArrowDown')) moveDir -= 1;
+  let moveForward = 0;
+  if (keys.has('KeyW') || keys.has('ArrowUp')) moveForward += 1;
+  if (keys.has('KeyS') || keys.has('ArrowDown')) moveForward -= 1;
+  let moveRight = 0;
+  if (keys.has('KeyD') || keys.has('ArrowRight')) moveRight += 1;
+  if (keys.has('KeyA') || keys.has('ArrowLeft')) moveRight -= 1;
+  if (moveForward !== 0 && moveRight !== 0) {
+    moveForward *= Math.SQRT1_2;
+    moveRight *= Math.SQRT1_2;
+  }
 
   let x = self.render.x;
   let z = self.render.z;
-  if (moveDir !== 0) {
-    const dx = Math.sin(bodyRot) * moveDir * stats.moveSpeed * dt;
-    const dz = Math.cos(bodyRot) * moveDir * stats.moveSpeed * dt;
+  if (moveForward !== 0 || moveRight !== 0) {
+    const fx = Math.sin(bodyRot);
+    const fz = Math.cos(bodyRot);
+    const rx = Math.sin(bodyRot + Math.PI / 2);
+    const rz = Math.cos(bodyRot + Math.PI / 2);
+    const dx = (fx * moveForward + rx * moveRight) * stats.moveSpeed * dt;
+    const dz = (fz * moveForward + rz * moveRight) * stats.moveSpeed * dt;
     const nx = clamp(x + dx, -arenaHalfSize + TANK_RADIUS, arenaHalfSize - TANK_RADIUS);
     if (!isBlockedByObstacle(nx, z, TANK_RADIUS)) x = nx;
     const nz = clamp(z + dz, -arenaHalfSize + TANK_RADIUS, arenaHalfSize - TANK_RADIUS);

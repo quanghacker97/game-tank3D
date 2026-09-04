@@ -43,11 +43,27 @@ const WEAPON_META = {
 
 const PICKUP_META = {
   armor: { icon: '🛡️', label: 'Giáp', color: 0x4da8ff },
+  heal: { icon: '➕', label: 'Hồi máu', color: 0x3ddc6c },
+  speed: { icon: '💨', label: 'Tăng tốc', color: 0x2de6c8 },
+  rapidfire: { icon: '🔃', label: 'Bắn nhanh', color: 0xff5ec4 },
+  invuln: { icon: '⭐', label: 'Bất tử tạm thời', color: 0xb35cff },
   weapon_laser: { icon: '⚡', label: 'Tia laser', color: 0x35e6ff },
   weapon_sniper: { icon: '🔭', label: 'Đạn tỉa', color: 0xfff066 },
   weapon_spread: { icon: '🎇', label: 'Đạn tỏa 3 viên', color: 0xff8a3d },
   weapon_explosive: { icon: '💣', label: 'Đạn nổ', color: 0xff4d4d },
 };
+
+// Timed-buff badge metadata for the HUD. Must mirror server/constants.js's
+// SPEED_BOOST_MULT/RAPID_FIRE_MULT so local movement/reload prediction
+// matches the authoritative simulation while a buff is active.
+const BUFF_META = {
+  armor: { icon: '🛡️', label: 'Giáp' },
+  speed: { icon: '💨', label: 'Tăng tốc' },
+  rapidfire: { icon: '🔃', label: 'Bắn nhanh' },
+  invuln: { icon: '⭐', label: 'Bất tử' },
+};
+const SPEED_BOOST_MULT = 1.5;
+const RAPID_FIRE_MULT = 0.65;
 
 const BULLET_VISUALS = {
   normal: { shape: 'sphere', size: 0.4, color: 0xffcc33, emissive: 0xff9900 },
@@ -141,8 +157,7 @@ const healthLabel = document.getElementById('healthLabel');
 const reloadBar = document.getElementById('reloadBar');
 const weaponIconEl = document.getElementById('weaponIcon');
 const weaponLabelEl = document.getElementById('weaponLabel');
-const armorBadgeEl = document.getElementById('armorBadge');
-const armorCountdownEl = document.getElementById('armorCountdown');
+const activeBuffsEl = document.getElementById('activeBuffs');
 const crosshairEl = document.getElementById('crosshair');
 const lockLabelEl = document.getElementById('lockLabel');
 const killfeedEl = document.getElementById('killfeed');
@@ -441,12 +456,24 @@ function createTankMesh(color) {
   shieldMesh.visible = false;
   tankGroup.add(shieldMesh);
 
+  const invulnMat = new THREE.MeshBasicMaterial({
+    color: 0xb35cff,
+    transparent: true,
+    opacity: 0.4,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const invulnMesh = new THREE.Mesh(new THREE.SphereGeometry(3.1, 16, 12), invulnMat);
+  invulnMesh.position.y = 1.4;
+  invulnMesh.visible = false;
+  tankGroup.add(invulnMesh);
+
   tankGroup.add(bodyPivot);
   tankGroup.add(turretPivot);
   tankGroup.scale.setScalar(TANK_VISUAL_SCALE);
   scene.add(tankGroup);
 
-  return { tankGroup, bodyPivot, turretPivot, shieldMesh };
+  return { tankGroup, bodyPivot, turretPivot, shieldMesh, invulnMesh };
 }
 
 // ---------- Bullet visuals ----------
@@ -530,6 +557,38 @@ function updateBursts(dt) {
   }
 }
 
+// ---------- Floating combat numbers (damage/heal) ----------
+const combatNumbers = [];
+function spawnCombatNumber(x, z, text, kind) {
+  const el = document.createElement('div');
+  el.className = 'combatNumber ' + kind;
+  el.textContent = text;
+  document.body.appendChild(el);
+  combatNumbers.push({ el, x, z, age: 0 });
+}
+function updateCombatNumbers(dt) {
+  for (let i = combatNumbers.length - 1; i >= 0; i--) {
+    const n = combatNumbers[i];
+    n.age += dt;
+    const t = n.age / 0.9;
+    if (t >= 1) {
+      n.el.remove();
+      combatNumbers.splice(i, 1);
+      continue;
+    }
+    const worldY = 1.9 + t * 1.4; // float upward in world space
+    const screenPos = new THREE.Vector3(n.x, worldY, n.z).project(camera);
+    if (screenPos.z > 1) {
+      n.el.style.display = 'none';
+      continue;
+    }
+    n.el.style.display = 'block';
+    n.el.style.left = (screenPos.x * 0.5 + 0.5) * window.innerWidth + 'px';
+    n.el.style.top = (-screenPos.y * 0.5 + 0.5) * window.innerHeight + 'px';
+    n.el.style.opacity = 1 - t;
+  }
+}
+
 // ---------- Networking / state ----------
 const socket = io();
 
@@ -591,6 +650,12 @@ function ensureEntity(id, color) {
     hp: 100,
     armorActive: false,
     armorExpiresAt: 0,
+    speedActive: false,
+    speedExpiresAt: 0,
+    rapidfireActive: false,
+    rapidfireExpiresAt: 0,
+    invulnActive: false,
+    invulnExpiresAt: 0,
     weaponType: 'normal',
     weaponExpiresAt: 0,
   };
@@ -618,6 +683,8 @@ function resetGameState() {
   }
   pickupMeshes.clear();
   latestPickupData = [];
+  for (const n of combatNumbers) n.el.remove();
+  combatNumbers.length = 0;
   selfId = null;
   lockedTargetId = null;
   stageResultShown = false;
@@ -825,6 +892,12 @@ function applySnapshot(snapshot, isInit) {
     e.alive = p.alive;
     e.armorActive = !!p.armorActive;
     e.armorExpiresAt = p.armorExpiresAt || 0;
+    e.speedActive = !!p.speedActive;
+    e.speedExpiresAt = p.speedExpiresAt || 0;
+    e.rapidfireActive = !!p.rapidfireActive;
+    e.rapidfireExpiresAt = p.rapidfireExpiresAt || 0;
+    e.invulnActive = !!p.invulnActive;
+    e.invulnExpiresAt = p.invulnExpiresAt || 0;
     e.weaponType = p.weaponType || 'normal';
     e.weaponExpiresAt = p.weaponExpiresAt || 0;
     if (isInit) {
@@ -890,6 +963,16 @@ socket.on('state', (msg) => {
   latestStageStatus = msg.stageStatus || null;
 
   for (const ev of msg.events) {
+    if (ev.type === 'hit' || ev.type === 'kill') {
+      const attackerId = ev.type === 'kill' ? ev.killerId : ev.attackerId;
+      const victim = entities.get(ev.victimId);
+      if (victim && ev.amount > 0) {
+        const kind = ev.victimId === selfId ? 'taken' : attackerId === selfId ? 'dealt' : 'neutral';
+        spawnCombatNumber(victim.target.x, victim.target.z, '-' + ev.amount, kind);
+      } else if (victim && ev.blocked) {
+        spawnCombatNumber(victim.target.x, victim.target.z, 'Miễn nhiễm', 'blocked');
+      }
+    }
     if (ev.type === 'kill') {
       const victim = entities.get(ev.victimId);
       if (victim) spawnBurst(victim.target.x, victim.target.z);
@@ -900,6 +983,10 @@ socket.on('state', (msg) => {
     } else if (ev.type === 'pickup') {
       const who = ev.playerId === selfId ? 'Bạn' : escapeHtml(ev.playerName);
       addKillfeedEntry(`${who} nhặt được <span class="k">${escapeHtml(ev.itemLabel)}</span>`);
+      if (ev.healAmount > 0) {
+        const healer = entities.get(ev.playerId);
+        if (healer) spawnCombatNumber(healer.target.x, healer.target.z, '+' + ev.healAmount, 'heal');
+      }
     }
   }
 
@@ -1197,9 +1284,11 @@ function currentLoadoutStats() {
   const u = profile.upgrades;
   const self = entities.get(selfId);
   const weaponMeta = WEAPON_META[(self && self.weaponType) || 'normal'] || WEAPON_META.normal;
+  const speedMult = self && self.speedActive ? SPEED_BOOST_MULT : 1;
+  const rapidMult = self && self.rapidfireActive ? RAPID_FIRE_MULT : 1;
   return {
-    moveSpeed: UPGRADES.agilityMove[u.agility],
-    fireCooldown: UPGRADES.rate[u.rate] * weaponMeta.cooldownMult,
+    moveSpeed: UPGRADES.agilityMove[u.agility] * speedMult,
+    fireCooldown: UPGRADES.rate[u.rate] * weaponMeta.cooldownMult * rapidMult,
   };
 }
 
@@ -1286,11 +1375,16 @@ function updateRemoteInterpolation() {
 
 function updateEntityMeshes() {
   for (const [id, e] of entities) {
-    const { tankGroup, bodyPivot, turretPivot, shieldMesh } = e.mesh;
+    const { tankGroup, bodyPivot, turretPivot, shieldMesh, invulnMesh } = e.mesh;
     tankGroup.position.set(e.render.x, 0, e.render.z);
     bodyPivot.rotation.y = e.render.bodyRot;
     turretPivot.rotation.y = e.render.turretRot;
     shieldMesh.visible = e.armorActive && e.alive;
+    invulnMesh.visible = e.invulnActive && e.alive;
+    if (invulnMesh.visible) {
+      const pulse = 1 + Math.sin(performance.now() / 120) * 0.06;
+      invulnMesh.scale.setScalar(pulse);
+    }
     tankGroup.visible = e.alive;
 
     const screenPos = new THREE.Vector3(e.render.x, 1.7, e.render.z).project(camera);
@@ -1412,13 +1506,15 @@ function updateHud() {
   weaponIconEl.textContent = weaponMeta.icon;
   weaponLabelEl.textContent = weaponMeta.label;
 
-  if (self.armorActive) {
-    const remainingS = Math.max(0, Math.ceil((self.armorExpiresAt - Date.now()) / 1000));
-    armorCountdownEl.textContent = remainingS;
-    armorBadgeEl.classList.remove('hidden');
-  } else {
-    armorBadgeEl.classList.add('hidden');
+  let buffsHtml = '';
+  const nowMs = Date.now();
+  for (const key of ['armor', 'speed', 'rapidfire', 'invuln']) {
+    if (!self[key + 'Active']) continue;
+    const meta = BUFF_META[key];
+    const remainingS = Math.max(0, Math.ceil((self[key + 'ExpiresAt'] - nowMs) / 1000));
+    buffsHtml += `<div class="buffBadge buff-${key}">${meta.icon} ${remainingS}s</div>`;
   }
+  activeBuffsEl.innerHTML = buffsHtml;
 
   if (!self.alive) {
     deathBanner.classList.remove('hidden');
@@ -1451,6 +1547,7 @@ function animate() {
     syncPickups();
     updatePickups(dt, now / 1000);
     updateBursts(dt);
+    updateCombatNumbers(dt);
     updateCamera();
     updateHud();
     updateLockUI();

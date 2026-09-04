@@ -24,6 +24,12 @@ const {
   ARMOR_DAMAGE_REDUCTION,
   ARMOR_DURATION_MIN_MS,
   ARMOR_DURATION_MAX_MS,
+  HEAL_AMOUNT,
+  SPEED_BOOST_MULT,
+  SPEED_BOOST_DURATION_MS,
+  RAPID_FIRE_MULT,
+  RAPID_FIRE_DURATION_MS,
+  INVULN_DURATION_MS,
 } = require('./constants');
 
 let nextBulletId = 1;
@@ -110,9 +116,21 @@ function sanitizeName(name) {
   return trimmed.replace(/[<>]/g, '') || 'Tank';
 }
 
-function freshCombatState() {
+// Timed on/off buffs. Adding a new one only means: a row here, one branch
+// in _collectPickup, and (if it changes movement/damage/fire math) one read
+// of player.buffs.<key>.active at the point that math happens.
+function freshBuffs() {
   return {
     armor: { active: false, expiresAt: 0 },
+    speed: { active: false, expiresAt: 0 },
+    rapidfire: { active: false, expiresAt: 0 },
+    invuln: { active: false, expiresAt: 0 },
+  };
+}
+
+function freshCombatState() {
+  return {
+    buffs: freshBuffs(),
     weapon: { type: 'normal', expiresAt: 0 },
   };
 }
@@ -301,11 +319,16 @@ class Game {
     });
   }
 
-  // Applies rawDamage (already weapon-scaled) to target, reduced by armor if
-  // active, then handles death/kill bookkeeping. Shared by direct hits and
-  // explosive splash so both go through identical armor/death logic.
+  // Applies rawDamage (already weapon-scaled) to target, reduced by armor
+  // (or entirely blocked by invuln), then handles death/kill bookkeeping.
+  // Shared by direct hits and explosive splash so both go through identical
+  // buff/death logic.
   _applyDamage(bullet, target, rawDamage, now) {
-    const dmg = target.armor.active ? rawDamage * (1 - ARMOR_DAMAGE_REDUCTION) : rawDamage;
+    if (target.buffs.invuln.active) {
+      this.events.push({ type: 'hit', attackerId: bullet.ownerId, victimId: target.id, amount: 0, blocked: true });
+      return;
+    }
+    const dmg = target.buffs.armor.active ? rawDamage * (1 - ARMOR_DAMAGE_REDUCTION) : rawDamage;
     target.hp -= dmg;
     if (target.hp <= 0) {
       target.hp = 0;
@@ -320,9 +343,15 @@ class Game {
         killerName: killer ? killer.name : 'Unknown',
         victimId: target.id,
         victimName: target.name,
+        amount: Math.round(dmg),
       });
     } else {
-      this.events.push({ type: 'hit', attackerId: bullet.ownerId, victimId: target.id });
+      this.events.push({
+        type: 'hit',
+        attackerId: bullet.ownerId,
+        victimId: target.id,
+        amount: Math.round(dmg),
+      });
     }
   }
 
@@ -351,20 +380,37 @@ class Game {
 
   _collectPickup(player, pickup, now) {
     const def = PICKUP_TYPES[pickup.kind];
-    if (def.kind === 'armor') {
-      const duration = ARMOR_DURATION_MIN_MS + Math.random() * (ARMOR_DURATION_MAX_MS - ARMOR_DURATION_MIN_MS);
-      player.armor.active = true;
-      player.armor.expiresAt = now + duration;
-    } else if (def.kind === 'weapon') {
+    let healAmount = 0;
+
+    if (def.kind === 'weapon') {
       player.weapon.type = def.weapon;
       player.weapon.expiresAt = now + WEAPON_BUFF_DURATION_MS;
+    } else if (def.kind === 'heal') {
+      const before = player.hp;
+      player.hp = Math.min(player.stats.maxHp, player.hp + HEAL_AMOUNT);
+      healAmount = Math.round(player.hp - before);
+    } else if (def.kind === 'armor') {
+      const duration = ARMOR_DURATION_MIN_MS + Math.random() * (ARMOR_DURATION_MAX_MS - ARMOR_DURATION_MIN_MS);
+      player.buffs.armor.active = true;
+      player.buffs.armor.expiresAt = now + duration;
+    } else if (def.kind === 'speed') {
+      player.buffs.speed.active = true;
+      player.buffs.speed.expiresAt = now + SPEED_BOOST_DURATION_MS;
+    } else if (def.kind === 'rapidfire') {
+      player.buffs.rapidfire.active = true;
+      player.buffs.rapidfire.expiresAt = now + RAPID_FIRE_DURATION_MS;
+    } else if (def.kind === 'invuln') {
+      player.buffs.invuln.active = true;
+      player.buffs.invuln.expiresAt = now + INVULN_DURATION_MS;
     }
+
     this.events.push({
       type: 'pickup',
       playerId: player.id,
       playerName: player.name,
       itemKind: def.kind,
       itemLabel: def.label,
+      healAmount,
     });
   }
 
@@ -395,7 +441,9 @@ class Game {
         continue;
       }
 
-      if (player.armor.active && now >= player.armor.expiresAt) player.armor.active = false;
+      for (const buff of Object.values(player.buffs)) {
+        if (buff.active && now >= buff.expiresAt) buff.active = false;
+      }
       if (player.weapon.type !== 'normal' && now >= player.weapon.expiresAt) player.weapon.type = 'normal';
 
       const { input } = player;
@@ -423,8 +471,9 @@ class Game {
         // camera (verified empirically — the other sign strafed backwards).
         const rx = Math.sin(player.bodyRot - Math.PI / 2);
         const rz = Math.cos(player.bodyRot - Math.PI / 2);
-        const dx = (fx * moveForward + rx * moveRight) * player.stats.moveSpeed * dt;
-        const dz = (fz * moveForward + rz * moveRight) * player.stats.moveSpeed * dt;
+        const speedMult = player.buffs.speed.active ? SPEED_BOOST_MULT : 1;
+        const dx = (fx * moveForward + rx * moveRight) * player.stats.moveSpeed * speedMult * dt;
+        const dz = (fz * moveForward + rz * moveRight) * player.stats.moveSpeed * speedMult * dt;
 
         const nx = clamp(player.x + dx, -ARENA_HALF_SIZE + TANK_RADIUS, ARENA_HALF_SIZE - TANK_RADIUS);
         if (!isBlockedByObstacle(nx, player.z, TANK_RADIUS)) player.x = nx;
@@ -435,7 +484,8 @@ class Game {
 
       if (input.firing) {
         const weaponDef = WEAPON_TYPES[player.weapon.type] || WEAPON_TYPES.normal;
-        const cooldown = player.stats.fireCooldown * weaponDef.cooldownMult;
+        const rapidMult = player.buffs.rapidfire.active ? RAPID_FIRE_MULT : 1;
+        const cooldown = player.stats.fireCooldown * weaponDef.cooldownMult * rapidMult;
         if (now - player.lastFireTime >= cooldown) {
           player.lastFireTime = now;
           this._fireWeapon(player, now);
@@ -552,8 +602,14 @@ class Game {
         kills: p.kills,
         deaths: p.deaths,
         color: p.color,
-        armorActive: p.armor.active,
-        armorExpiresAt: p.armor.expiresAt,
+        armorActive: p.buffs.armor.active,
+        armorExpiresAt: p.buffs.armor.expiresAt,
+        speedActive: p.buffs.speed.active,
+        speedExpiresAt: p.buffs.speed.expiresAt,
+        rapidfireActive: p.buffs.rapidfire.active,
+        rapidfireExpiresAt: p.buffs.rapidfire.expiresAt,
+        invulnActive: p.buffs.invuln.active,
+        invulnExpiresAt: p.buffs.invuln.expiresAt,
         weaponType: p.weapon.type,
         weaponExpiresAt: p.weapon.expiresAt,
       })),

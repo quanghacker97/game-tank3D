@@ -32,19 +32,23 @@ Mở `http://localhost:3000` trên nhiều tab/máy khác nhau (cùng mạng, ho
 - **Nút 🔥** (góc dưới phải): giữ để bắn liên tục.
 - **Nút 🎯** (cạnh nút bắn): khoá/mở khoá mục tiêu gần nhất — rất hữu ích trên di động vì vừa lái vừa ngắm chính xác bằng ngón tay khó hơn chuột.
 
-Hạ gục người chơi khác để ghi điểm; bạn sẽ hồi sinh sau 3 giây ở một điểm spawn ngẫu nhiên. Bảng xếp hạng (góc trên trái) và kill-feed (góc trên phải) cập nhật theo thời gian thực.
+Hạ gục người chơi khác để ghi điểm; bạn sẽ hồi sinh sau 3 giây ở một điểm spawn ngẫu nhiên. Bảng xếp hạng (góc trên trái) và kill-feed (góc trên phải) cập nhật theo thời gian thực. Khi trúng đạn hoặc gây sát thương, số máu bị trừ hiện lên ngay trên xe dạng số bay lên (đỏ khi bạn bị trừ máu, vàng khi bạn gây sát thương cho đối thủ, xanh lá khi hồi máu, tím khi bị chặn nhờ bất tử) để dễ theo dõi giao tranh.
 
 ## Vật phẩm rơi trên bản đồ
 
-Tối đa 4 vật phẩm xuất hiện ngẫu nhiên cùng lúc tại các điểm cố định rải khắp bản đồ (mỗi ~12 giây có thêm một cái nếu chưa đủ 4), lái xe tăng cán qua là nhặt được ngay — áp dụng ở cả Đấu trường lẫn Chiến dịch, và cả xe địch AI cũng nhặt được nếu đi ngang qua:
+Tối đa 4 vật phẩm xuất hiện ngẫu nhiên cùng lúc tại các điểm cố định rải khắp bản đồ (mỗi ~12 giây có thêm một cái nếu chưa đủ 4), lái xe tăng cán qua là nhặt được ngay — áp dụng ở cả Đấu trường lẫn Chiến dịch, và cả xe địch AI cũng nhặt được nếu đi ngang qua. Có 9 loại vật phẩm:
 
 - **🛡️ Giáp**: giảm 35% sát thương phải nhận trong 30–60 giây (ngẫu nhiên mỗi lần nhặt). Có hiệu ứng khiên xanh mờ quanh xe khi đang kích hoạt, và đồng hồ đếm ngược cạnh thanh máu.
+- **➕ Hồi máu**: hồi ngay 40 máu (không vượt quá máu tối đa).
+- **💨 Tăng tốc**: tăng 50% tốc độ di chuyển trong 20 giây.
+- **🔃 Bắn nhanh**: giảm thời gian hồi chiêu (bắn nhanh hơn) trong 20 giây.
+- **⭐ Bất tử tạm thời**: miễn nhiễm hoàn toàn mọi sát thương trong 4 giây, có hiệu ứng khiên tím phát sáng nhấp nháy quanh xe.
 - **⚡ Tia laser**: đạn nhanh, bắn liên thanh cực nhanh, sát thương mỗi viên thấp hơn.
 - **🔭 Đạn tỉa**: một phát sát thương rất cao, tốc độ đạn cực nhanh, nhưng hồi chiêu chậm.
 - **🎇 Đạn tỏa 3 viên**: mỗi lần bắn ra 3 viên theo hình quạt, mỗi viên sát thương thấp hơn.
 - **💣 Đạn nổ**: bay chậm hơn, nổ văng mảnh gây sát thương cho mọi xe (địch) trong bán kính nổ khi chạm mục tiêu/vật cản/hết tầm — không tự gây sát thương cho người bắn.
 
-Vũ khí đặc biệt có tác dụng trong 25 giây rồi tự quay lại pháo thường; vũ khí/giáp hiện tại hiển thị ở góc dưới trái màn hình. Chết thì mất hết buff đang có khi hồi sinh.
+Vũ khí đặc biệt có tác dụng trong 25 giây rồi tự quay lại pháo thường; các buff/vũ khí đang có hiệu lực hiển thị thành huy hiệu ở góc dưới trái màn hình. Chết thì mất hết buff đang có khi hồi sinh.
 
 ## Chế độ chơi
 

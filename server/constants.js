@@ -180,6 +180,10 @@ const WEAPON_BUFF_DURATION_MS = 25000;
 
 const PICKUP_TYPES = {
   armor: { kind: 'armor', label: 'Giáp', color: 0x4da8ff },
+  heal: { kind: 'heal', label: 'Hồi máu', color: 0x3ddc6c },
+  speed: { kind: 'speed', label: 'Tăng tốc', color: 0x2de6c8 },
+  rapidfire: { kind: 'rapidfire', label: 'Bắn nhanh', color: 0xff5ec4 },
+  invuln: { kind: 'invuln', label: 'Bất tử tạm thời', color: 0xb35cff },
   weapon_laser: { kind: 'weapon', weapon: 'laser', label: 'Tia laser', color: 0x35e6ff },
   weapon_sniper: { kind: 'weapon', weapon: 'sniper', label: 'Đạn tỉa', color: 0xfff066 },
   weapon_spread: { kind: 'weapon', weapon: 'spread', label: 'Đạn tỏa 3 viên', color: 0xff8a3d },
@@ -203,6 +207,16 @@ const PICKUP_MIN_SEPARATION = 8; // don't spawn two pickups on top of each other
 const ARMOR_DAMAGE_REDUCTION = 0.35;
 const ARMOR_DURATION_MIN_MS = 30000;
 const ARMOR_DURATION_MAX_MS = 60000;
+
+const HEAL_AMOUNT = 40;
+
+const SPEED_BOOST_MULT = 1.5;
+const SPEED_BOOST_DURATION_MS = 20000;
+
+const RAPID_FIRE_MULT = 0.65; // multiplies cooldown (lower = faster)
+const RAPID_FIRE_DURATION_MS = 20000;
+
+const INVULN_DURATION_MS = 4000;
 
 const STAGES = [
   { id: 1, name: 'Ải 1', bots: ['easy'], reward: 60 },
@@ -243,4 +257,10 @@ module.exports = {
   ARMOR_DAMAGE_REDUCTION,
   ARMOR_DURATION_MIN_MS,
   ARMOR_DURATION_MAX_MS,
+  HEAL_AMOUNT,
+  SPEED_BOOST_MULT,
+  SPEED_BOOST_DURATION_MS,
+  RAPID_FIRE_MULT,
+  RAPID_FIRE_DURATION_MS,
+  INVULN_DURATION_MS,
 };

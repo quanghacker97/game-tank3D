@@ -30,6 +30,36 @@ const UPGRADE_TRACKS = [
   { key: 'rate', icon: '🔫', label: 'Tốc độ bắn', fmt: (lv) => `${(1000 / UPGRADES.rate[lv]).toFixed(2)} phát/s` },
 ];
 
+// Visual/label metadata for weapons & pickups — must mirror the kinds server/
+// constants.js's WEAPON_TYPES / PICKUP_TYPES can produce. Damage/splash stay
+// server-authoritative; cooldownMult is duplicated here too (must match
+// server exactly) purely so the local reload-bar prediction paces itself
+// correctly for whichever weapon is currently active.
+const WEAPON_META = {
+  normal: { icon: '🔫', label: 'Pháo thường', cooldownMult: 1 },
+  laser: { icon: '⚡', label: 'Tia laser', cooldownMult: 0.32 },
+  sniper: { icon: '🔭', label: 'Đạn tỉa', cooldownMult: 2.6 },
+  spread: { icon: '🎇', label: 'Đạn tỏa 3 viên', cooldownMult: 1.3 },
+  explosive: { icon: '💣', label: 'Đạn nổ', cooldownMult: 1.9 },
+};
+
+const PICKUP_META = {
+  armor: { icon: '🛡️', label: 'Giáp', color: 0x4da8ff },
+  weapon_laser: { icon: '⚡', label: 'Tia laser', color: 0x35e6ff },
+  weapon_sniper: { icon: '🔭', label: 'Đạn tỉa', color: 0xfff066 },
+  weapon_spread: { icon: '🎇', label: 'Đạn tỏa 3 viên', color: 0xff8a3d },
+  weapon_explosive: { icon: '💣', label: 'Đạn nổ', color: 0xff4d4d },
+};
+
+const BULLET_VISUALS = {
+  normal: { shape: 'sphere', size: 0.4, color: 0xffcc33, emissive: 0xff9900 },
+  laser: { shape: 'bolt', length: 2.2, radius: 0.12, color: 0x35e6ff, emissive: 0x35e6ff },
+  sniper: { shape: 'bolt', length: 1.6, radius: 0.14, color: 0xfff066, emissive: 0xffe14d },
+  spread: { shape: 'sphere', size: 0.28, color: 0xff8a3d, emissive: 0xff6a00 },
+  explosive: { shape: 'sphere', size: 0.55, color: 0xff4d4d, emissive: 0xff2200 },
+};
+const BULLET_HEIGHT = 0.68;
+
 // ---------- Profile / progression (localStorage) ----------
 const PROFILE_KEY = 'tank3d_profile_v1';
 
@@ -111,6 +141,10 @@ const menuLeaveBtnEl = document.getElementById('menuLeaveBtn');
 const healthBar = document.getElementById('healthBar');
 const healthLabel = document.getElementById('healthLabel');
 const reloadBar = document.getElementById('reloadBar');
+const weaponIconEl = document.getElementById('weaponIcon');
+const weaponLabelEl = document.getElementById('weaponLabel');
+const armorBadgeEl = document.getElementById('armorBadge');
+const armorCountdownEl = document.getElementById('armorCountdown');
 const crosshairEl = document.getElementById('crosshair');
 const lockLabelEl = document.getElementById('lockLabel');
 const killfeedEl = document.getElementById('killfeed');
@@ -397,22 +431,81 @@ function createTankMesh(color) {
   antenna.rotation.z = 0.18;
   turretPivot.add(antenna);
 
+  const shieldMat = new THREE.MeshBasicMaterial({
+    color: 0x4da8ff,
+    transparent: true,
+    opacity: 0.28,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const shieldMesh = new THREE.Mesh(new THREE.SphereGeometry(2.8, 16, 12), shieldMat);
+  shieldMesh.position.y = 1.4;
+  shieldMesh.visible = false;
+  tankGroup.add(shieldMesh);
+
   tankGroup.add(bodyPivot);
   tankGroup.add(turretPivot);
   tankGroup.scale.setScalar(TANK_VISUAL_SCALE);
   scene.add(tankGroup);
 
-  return { tankGroup, bodyPivot, turretPivot };
+  return { tankGroup, bodyPivot, turretPivot, shieldMesh };
 }
 
 // ---------- Bullet visuals ----------
-const bulletMat = new THREE.MeshStandardMaterial({ color: 0xffcc33, emissive: 0xff9900, emissiveIntensity: 1.5 });
-const bulletGeo = new THREE.SphereGeometry(0.4, 8, 8);
-function createBulletMesh() {
-  const mesh = new THREE.Mesh(bulletGeo, bulletMat);
+function createBulletMesh(kind) {
+  const v = BULLET_VISUALS[kind] || BULLET_VISUALS.normal;
+  const mat = new THREE.MeshStandardMaterial({ color: v.color, emissive: v.emissive, emissiveIntensity: 1.6 });
+  // A wrapper group decouples "point this along the flight direction" (set
+  // on the group each frame from vx/vz) from "lay the cylinder flat" (a
+  // fixed local tilt on the mesh) so the two rotations can't fight.
+  const group = new THREE.Group();
+  let mesh;
+  if (v.shape === 'bolt') {
+    mesh = new THREE.Mesh(new THREE.CylinderGeometry(v.radius, v.radius, v.length, 8), mat);
+    mesh.rotation.x = Math.PI / 2;
+  } else {
+    mesh = new THREE.Mesh(new THREE.SphereGeometry(v.size, 10, 10), mat);
+  }
   mesh.castShadow = true;
-  scene.add(mesh);
-  return mesh;
+  group.add(mesh);
+  scene.add(group);
+  return group;
+}
+
+function createPickupMesh(kind) {
+  const meta = PICKUP_META[kind] || PICKUP_META.armor;
+  const group = new THREE.Group();
+
+  const coreMat = new THREE.MeshStandardMaterial({
+    color: meta.color,
+    emissive: meta.color,
+    emissiveIntensity: 0.65,
+    roughness: 0.3,
+    metalness: 0.4,
+  });
+  const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.85, 0), coreMat);
+  core.castShadow = true;
+  group.add(core);
+
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: meta.color,
+    transparent: true,
+    opacity: 0.35,
+    side: THREE.DoubleSide,
+  });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(1.0, 1.3, 24), ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.03;
+  group.add(ring);
+
+  scene.add(group);
+
+  const labelEl = document.createElement('div');
+  labelEl.className = 'pickupLabel';
+  labelEl.textContent = meta.icon;
+  document.body.appendChild(labelEl);
+
+  return { group, core, labelEl };
 }
 
 const bursts = [];
@@ -451,6 +544,9 @@ const entities = new Map(); // id -> { mesh, nameTagEl, hpFillEl, render, target
 const bulletMeshes = new Map();
 const bulletRender = new Map();
 let latestBulletData = [];
+
+const pickupMeshes = new Map(); // id -> { group, core, labelEl }
+let latestPickupData = [];
 
 let localDeathStart = 0;
 let lockedTargetId = null;
@@ -495,6 +591,10 @@ function ensureEntity(id, color) {
     isBot: false,
     maxHp: 100,
     hp: 100,
+    armorActive: false,
+    armorExpiresAt: 0,
+    weaponType: 'normal',
+    weaponExpiresAt: 0,
   };
   entities.set(id, e);
   return e;
@@ -514,6 +614,12 @@ function resetGameState() {
   bulletMeshes.clear();
   bulletRender.clear();
   latestBulletData = [];
+  for (const entry of pickupMeshes.values()) {
+    scene.remove(entry.group);
+    entry.labelEl.remove();
+  }
+  pickupMeshes.clear();
+  latestPickupData = [];
   selfId = null;
   lockedTargetId = null;
   stageResultShown = false;
@@ -719,6 +825,10 @@ function applySnapshot(snapshot, isInit) {
     e.kills = p.kills;
     e.deaths = p.deaths;
     e.alive = p.alive;
+    e.armorActive = !!p.armorActive;
+    e.armorExpiresAt = p.armorExpiresAt || 0;
+    e.weaponType = p.weaponType || 'normal';
+    e.weaponExpiresAt = p.weaponExpiresAt || 0;
     if (isInit) {
       e.render.x = p.x;
       e.render.z = p.z;
@@ -749,6 +859,7 @@ socket.on('init', (data) => {
   obstacles = data.obstacles;
   latestStageStatus = data.stageStatus || null;
   latestBulletData = data.snapshot.bullets;
+  latestPickupData = data.snapshot.pickups || [];
 
   if (!worldBuilt) {
     buildGround();
@@ -777,6 +888,7 @@ socket.on('playerLeft', (p) => {
 socket.on('state', (msg) => {
   applySnapshot(msg.snapshot, false);
   latestBulletData = msg.snapshot.bullets;
+  latestPickupData = msg.snapshot.pickups || [];
   latestStageStatus = msg.stageStatus || null;
 
   for (const ev of msg.events) {
@@ -787,6 +899,9 @@ socket.on('state', (msg) => {
       const victimLabel = ev.victimId === selfId ? 'Bạn' : escapeHtml(ev.victimName);
       addKillfeedEntry(`<span class="k">${killerLabel}</span> đã hạ <span class="v">${victimLabel}</span>`);
       if (ev.victimId === selfId) localDeathStart = performance.now();
+    } else if (ev.type === 'pickup') {
+      const who = ev.playerId === selfId ? 'Bạn' : escapeHtml(ev.playerName);
+      addKillfeedEntry(`${who} nhặt được <span class="k">${escapeHtml(ev.itemLabel)}</span>`);
     }
   }
 
@@ -1079,9 +1194,11 @@ let lastTime = performance.now();
 
 function currentLoadoutStats() {
   const u = profile.upgrades;
+  const self = entities.get(selfId);
+  const weaponMeta = WEAPON_META[(self && self.weaponType) || 'normal'] || WEAPON_META.normal;
   return {
     moveSpeed: UPGRADES.agilityMove[u.agility],
-    fireCooldown: UPGRADES.rate[u.rate],
+    fireCooldown: UPGRADES.rate[u.rate] * weaponMeta.cooldownMult,
   };
 }
 
@@ -1168,10 +1285,11 @@ function updateRemoteInterpolation() {
 
 function updateEntityMeshes() {
   for (const [id, e] of entities) {
-    const { tankGroup, bodyPivot, turretPivot } = e.mesh;
+    const { tankGroup, bodyPivot, turretPivot, shieldMesh } = e.mesh;
     tankGroup.position.set(e.render.x, 0, e.render.z);
     bodyPivot.rotation.y = e.render.bodyRot;
     turretPivot.rotation.y = e.render.turretRot;
+    shieldMesh.visible = e.armorActive && e.alive;
     tankGroup.visible = e.alive;
 
     const screenPos = new THREE.Vector3(e.render.x, 1.7, e.render.z).project(camera);
@@ -1198,14 +1316,15 @@ function syncBullets() {
     let mesh = bulletMeshes.get(b.id);
     let r = bulletRender.get(b.id);
     if (!mesh) {
-      mesh = createBulletMesh();
+      mesh = createBulletMesh(b.kind);
       bulletMeshes.set(b.id, mesh);
       r = { x: b.x, z: b.z };
       bulletRender.set(b.id, r);
     }
     r.x += (b.x - r.x) * 0.5;
     r.z += (b.z - r.z) * 0.5;
-    mesh.position.set(r.x, 0.68, r.z);
+    mesh.position.set(r.x, BULLET_HEIGHT, r.z);
+    if (b.vx || b.vz) mesh.rotation.y = Math.atan2(b.vx, b.vz);
   }
   for (const [id, mesh] of bulletMeshes) {
     if (!seen.has(id)) {
@@ -1213,6 +1332,44 @@ function syncBullets() {
       bulletMeshes.delete(id);
       bulletRender.delete(id);
     }
+  }
+}
+
+function syncPickups() {
+  const seen = new Set();
+  for (const pk of latestPickupData) {
+    seen.add(pk.id);
+    let entry = pickupMeshes.get(pk.id);
+    if (!entry) {
+      entry = createPickupMesh(pk.kind);
+      pickupMeshes.set(pk.id, entry);
+    }
+    entry.x = pk.x;
+    entry.z = pk.z;
+  }
+  for (const [id, entry] of pickupMeshes) {
+    if (!seen.has(id)) {
+      scene.remove(entry.group);
+      entry.labelEl.remove();
+      pickupMeshes.delete(id);
+    }
+  }
+}
+
+function updatePickups(dt, tSec) {
+  for (const entry of pickupMeshes.values()) {
+    entry.group.position.set(entry.x, 0, entry.z);
+    entry.core.rotation.y += dt * 1.6;
+    entry.core.position.y = 1.1 + Math.sin(tSec * 2 + entry.x) * 0.15;
+
+    const screenPos = new THREE.Vector3(entry.x, 2.1, entry.z).project(camera);
+    if (screenPos.z > 1) {
+      entry.labelEl.style.display = 'none';
+      continue;
+    }
+    entry.labelEl.style.display = 'block';
+    entry.labelEl.style.left = (screenPos.x * 0.5 + 0.5) * window.innerWidth + 'px';
+    entry.labelEl.style.top = (-screenPos.y * 0.5 + 0.5) * window.innerHeight + 'px';
   }
 }
 
@@ -1250,6 +1407,18 @@ function updateHud() {
   const reloadPct = Math.min(100, (sinceFire / fireCooldownLocal) * 100);
   reloadBar.style.width = reloadPct + '%';
 
+  const weaponMeta = WEAPON_META[self.weaponType] || WEAPON_META.normal;
+  weaponIconEl.textContent = weaponMeta.icon;
+  weaponLabelEl.textContent = weaponMeta.label;
+
+  if (self.armorActive) {
+    const remainingS = Math.max(0, Math.ceil((self.armorExpiresAt - Date.now()) / 1000));
+    armorCountdownEl.textContent = remainingS;
+    armorBadgeEl.classList.remove('hidden');
+  } else {
+    armorBadgeEl.classList.add('hidden');
+  }
+
   if (!self.alive) {
     deathBanner.classList.remove('hidden');
     const remaining = Math.max(0, RESPAWN_DELAY_MS - (performance.now() - localDeathStart));
@@ -1278,6 +1447,8 @@ function animate() {
     updateRemoteInterpolation();
     updateEntityMeshes();
     syncBullets();
+    syncPickups();
+    updatePickups(dt, now / 1000);
     updateBursts(dt);
     updateCamera();
     updateHud();

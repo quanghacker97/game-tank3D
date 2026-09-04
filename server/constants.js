@@ -108,6 +108,102 @@ const BOT_TIERS = {
   },
 };
 
+// ---------------------------------------------------------------------
+// Weapons ("nhiều loại đạn hình thái khác nhau"). "normal" is the base
+// cannon every tank starts with; the other four are temporary pickups.
+// Multipliers apply on top of the player's own loadout damage/cooldown
+// (from UPGRADES) so equipment upgrades still matter while a special
+// weapon is active.
+// ---------------------------------------------------------------------
+
+const WEAPON_TYPES = {
+  normal: {
+    label: 'Pháo thường',
+    bulletSpeed: 70,
+    damageMult: 1,
+    cooldownMult: 1,
+    bulletsPerShot: 1,
+    spreadAngle: 0,
+    splashRadius: 0,
+    color: 0xffcc33,
+  },
+  laser: {
+    label: 'Tia laser',
+    bulletSpeed: 200,
+    damageMult: 0.45,
+    cooldownMult: 0.32,
+    bulletsPerShot: 1,
+    spreadAngle: 0,
+    splashRadius: 0,
+    color: 0x35e6ff,
+  },
+  sniper: {
+    label: 'Đạn tỉa',
+    bulletSpeed: 260,
+    damageMult: 2.6,
+    cooldownMult: 2.6,
+    bulletsPerShot: 1,
+    spreadAngle: 0,
+    splashRadius: 0,
+    color: 0xfff066,
+  },
+  spread: {
+    label: 'Đạn tỏa 3 viên',
+    bulletSpeed: 65,
+    damageMult: 0.5,
+    cooldownMult: 1.3,
+    bulletsPerShot: 3,
+    spreadAngle: 0.22, // radians between adjacent pellets
+    splashRadius: 0,
+    color: 0xff8a3d,
+  },
+  explosive: {
+    label: 'Đạn nổ',
+    bulletSpeed: 42,
+    damageMult: 1.15,
+    cooldownMult: 1.9,
+    bulletsPerShot: 1,
+    spreadAngle: 0,
+    splashRadius: 4.5,
+    splashDamageMult: 0.6,
+    color: 0xff4d4d,
+  },
+};
+
+const WEAPON_BUFF_DURATION_MS = 25000;
+
+// ---------------------------------------------------------------------
+// Pickups: armor (damage reduction) + one pickup per special weapon.
+// Spawn at fixed candidate points spread across open lanes of the map
+// (kept clear of the OBSTACLES boxes above).
+// ---------------------------------------------------------------------
+
+const PICKUP_TYPES = {
+  armor: { kind: 'armor', label: 'Giáp', color: 0x4da8ff },
+  weapon_laser: { kind: 'weapon', weapon: 'laser', label: 'Tia laser', color: 0x35e6ff },
+  weapon_sniper: { kind: 'weapon', weapon: 'sniper', label: 'Đạn tỉa', color: 0xfff066 },
+  weapon_spread: { kind: 'weapon', weapon: 'spread', label: 'Đạn tỏa 3 viên', color: 0xff8a3d },
+  weapon_explosive: { kind: 'weapon', weapon: 'explosive', label: 'Đạn nổ', color: 0xff4d4d },
+};
+
+const PICKUP_SPAWN_POINTS = [
+  { x: 0, z: -20 }, { x: 0, z: 20 },
+  { x: -15, z: 0 }, { x: 15, z: 0 },
+  { x: 30, z: 30 }, { x: -30, z: 30 }, { x: 30, z: -30 }, { x: -30, z: -30 },
+  { x: 0, z: -32 }, { x: 0, z: 32 },
+  { x: 45, z: 0 }, { x: -45, z: 0 },
+  { x: 12, z: 12 }, { x: -12, z: -12 }, { x: 12, z: -12 }, { x: -12, z: 12 },
+];
+
+const PICKUP_RADIUS = 1.4;
+const MAX_ACTIVE_PICKUPS = 4;
+const PICKUP_SPAWN_INTERVAL_MS = 12000;
+const PICKUP_MIN_SEPARATION = 8; // don't spawn two pickups on top of each other
+
+const ARMOR_DAMAGE_REDUCTION = 0.35;
+const ARMOR_DURATION_MIN_MS = 30000;
+const ARMOR_DURATION_MAX_MS = 60000;
+
 const STAGES = [
   { id: 1, name: 'Ải 1', bots: ['easy'], reward: 60 },
   { id: 2, name: 'Ải 2', bots: ['easy', 'easy'], reward: 90 },
@@ -136,4 +232,15 @@ module.exports = {
   UPGRADE_COST,
   BOT_TIERS,
   STAGES,
+  WEAPON_TYPES,
+  WEAPON_BUFF_DURATION_MS,
+  PICKUP_TYPES,
+  PICKUP_SPAWN_POINTS,
+  PICKUP_RADIUS,
+  MAX_ACTIVE_PICKUPS,
+  PICKUP_SPAWN_INTERVAL_MS,
+  PICKUP_MIN_SEPARATION,
+  ARMOR_DAMAGE_REDUCTION,
+  ARMOR_DURATION_MIN_MS,
+  ARMOR_DURATION_MAX_MS,
 };

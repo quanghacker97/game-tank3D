@@ -6,7 +6,6 @@ const {
   TANK_RADIUS,
   RESPAWN_DELAY_MS,
   BULLET_RADIUS,
-  BULLET_SPEED,
   BULLET_LIFETIME_MS,
   OBSTACLES,
   SPAWN_POINTS,
@@ -14,10 +13,22 @@ const {
   MAX_UPGRADE_LEVEL,
   UPGRADES,
   BOT_TIERS,
+  WEAPON_TYPES,
+  WEAPON_BUFF_DURATION_MS,
+  PICKUP_TYPES,
+  PICKUP_SPAWN_POINTS,
+  PICKUP_RADIUS,
+  MAX_ACTIVE_PICKUPS,
+  PICKUP_SPAWN_INTERVAL_MS,
+  PICKUP_MIN_SEPARATION,
+  ARMOR_DAMAGE_REDUCTION,
+  ARMOR_DURATION_MIN_MS,
+  ARMOR_DURATION_MAX_MS,
 } = require('./constants');
 
 let nextBulletId = 1;
 let nextBotSeq = 1;
+let nextPickupId = 1;
 
 function randomSpawn() {
   const p = SPAWN_POINTS[Math.floor(Math.random() * SPAWN_POINTS.length)];
@@ -99,6 +110,13 @@ function sanitizeName(name) {
   return trimmed.replace(/[<>]/g, '') || 'Tank';
 }
 
+function freshCombatState() {
+  return {
+    armor: { active: false, expiresAt: 0 },
+    weapon: { type: 'normal', expiresAt: 0 },
+  };
+}
+
 class Game {
   /**
    * @param {string} roomId
@@ -111,8 +129,10 @@ class Game {
     this.stageDef = stageDef || null;
     this.players = new Map(); // id -> player state (humans + bots)
     this.bullets = new Map(); // id -> bullet state
-    this.events = []; // transient events (hit/kill/join/leave) since last flush
+    this.pickups = new Map(); // id -> {id, kind, x, z}
+    this.events = []; // transient events (hit/kill/join/leave/pickup) since last flush
     this._colorIndex = 0;
+    this._lastPickupSpawnAt = Date.now();
     this.finished = false;
     this.stageCleared = false;
     this.stageFailed = false;
@@ -141,6 +161,7 @@ class Game {
       lastFireTime: 0,
       deathTime: 0,
       input: { moveForward: 0, moveRight: 0, turretRot: spawn.rotY, firing: false },
+      ...freshCombatState(),
     };
     this.players.set(id, player);
     this.events.push({ type: 'join', id, name: player.name });
@@ -172,6 +193,7 @@ class Game {
       deathTime: 0,
       input: { moveForward: 0, moveRight: 0, turretRot: spawn.rotY, firing: false },
       ai: { lastX: spawn.x, lastZ: spawn.z, stuckTicks: 0, avoidUntil: 0, avoidSign: 1 },
+      ...freshCombatState(),
     };
     this.players.set(id, bot);
     return bot;
@@ -246,20 +268,103 @@ class Game {
     bot.input.firing = dist <= bot.stats.engageRange && aligned;
   }
 
-  _spawnBullet(owner) {
+  _fireWeapon(player, now) {
+    const weaponType = player.weapon.type;
+    const weaponDef = WEAPON_TYPES[weaponType] || WEAPON_TYPES.normal;
+    const n = weaponDef.bulletsPerShot;
+    const mid = (n - 1) / 2;
+    for (let i = 0; i < n; i++) {
+      const angleOffset = n > 1 ? (i - mid) * weaponDef.spreadAngle : 0;
+      this._spawnBullet(player, weaponType, weaponDef, angleOffset, now);
+    }
+  }
+
+  _spawnBullet(owner, weaponType, weaponDef, angleOffset, now) {
     const id = nextBulletId++;
     const muzzleDist = TANK_RADIUS + 0.48; // barrel tip, scaled with the tank's 0.4x model
-    const dirX = Math.sin(owner.turretRot);
-    const dirZ = Math.cos(owner.turretRot);
+    const angle = owner.turretRot + angleOffset;
+    const dirX = Math.sin(angle);
+    const dirZ = Math.cos(angle);
     this.bullets.set(id, {
       id,
       ownerId: owner.id,
-      damage: owner.stats.damage,
+      kind: weaponType,
+      color: weaponDef.color,
+      damage: owner.stats.damage * weaponDef.damageMult,
+      splashRadius: weaponDef.splashRadius || 0,
+      splashDamageMult: weaponDef.splashDamageMult || 0,
       x: owner.x + dirX * muzzleDist,
       z: owner.z + dirZ * muzzleDist,
-      vx: dirX * BULLET_SPEED,
-      vz: dirZ * BULLET_SPEED,
-      bornAt: Date.now(),
+      vx: dirX * weaponDef.bulletSpeed,
+      vz: dirZ * weaponDef.bulletSpeed,
+      bornAt: now,
+    });
+  }
+
+  // Applies rawDamage (already weapon-scaled) to target, reduced by armor if
+  // active, then handles death/kill bookkeeping. Shared by direct hits and
+  // explosive splash so both go through identical armor/death logic.
+  _applyDamage(bullet, target, rawDamage, now) {
+    const dmg = target.armor.active ? rawDamage * (1 - ARMOR_DAMAGE_REDUCTION) : rawDamage;
+    target.hp -= dmg;
+    if (target.hp <= 0) {
+      target.hp = 0;
+      target.alive = false;
+      target.deathTime = now;
+      target.deaths++;
+      const killer = this.players.get(bullet.ownerId);
+      if (killer) killer.kills++;
+      this.events.push({
+        type: 'kill',
+        killerId: bullet.ownerId,
+        killerName: killer ? killer.name : 'Unknown',
+        victimId: target.id,
+        victimName: target.name,
+      });
+    } else {
+      this.events.push({ type: 'hit', attackerId: bullet.ownerId, victimId: target.id });
+    }
+  }
+
+  _maintainPickups(now) {
+    if (this.pickups.size >= MAX_ACTIVE_PICKUPS) return;
+    if (now - this._lastPickupSpawnAt < PICKUP_SPAWN_INTERVAL_MS) return;
+
+    const existing = Array.from(this.pickups.values());
+    const candidates = PICKUP_SPAWN_POINTS.filter(
+      (p) =>
+        !existing.some((pk) => {
+          const dx = pk.x - p.x;
+          const dz = pk.z - p.z;
+          return dx * dx + dz * dz < PICKUP_MIN_SEPARATION * PICKUP_MIN_SEPARATION;
+        })
+    );
+    if (candidates.length === 0) return;
+
+    const point = candidates[Math.floor(Math.random() * candidates.length)];
+    const kinds = Object.keys(PICKUP_TYPES);
+    const kind = kinds[Math.floor(Math.random() * kinds.length)];
+    const id = nextPickupId++;
+    this.pickups.set(id, { id, kind, x: point.x, z: point.z });
+    this._lastPickupSpawnAt = now;
+  }
+
+  _collectPickup(player, pickup, now) {
+    const def = PICKUP_TYPES[pickup.kind];
+    if (def.kind === 'armor') {
+      const duration = ARMOR_DURATION_MIN_MS + Math.random() * (ARMOR_DURATION_MAX_MS - ARMOR_DURATION_MIN_MS);
+      player.armor.active = true;
+      player.armor.expiresAt = now + duration;
+    } else if (def.kind === 'weapon') {
+      player.weapon.type = def.weapon;
+      player.weapon.expiresAt = now + WEAPON_BUFF_DURATION_MS;
+    }
+    this.events.push({
+      type: 'pickup',
+      playerId: player.id,
+      playerName: player.name,
+      itemKind: def.kind,
+      itemLabel: def.label,
     });
   }
 
@@ -281,6 +386,7 @@ class Game {
           player.turretRot = spawn.rotY;
           player.hp = player.stats.maxHp;
           player.alive = true;
+          Object.assign(player, freshCombatState());
         } else if (!player.isBot && this.mode === 'campaign' && !this.finished) {
           this.finished = true;
           this.stageFailed = true;
@@ -288,6 +394,9 @@ class Game {
         }
         continue;
       }
+
+      if (player.armor.active && now >= player.armor.expiresAt) player.armor.active = false;
+      if (player.weapon.type !== 'normal' && now >= player.weapon.expiresAt) player.weapon.type = 'normal';
 
       const { input } = player;
 
@@ -324,9 +433,13 @@ class Game {
         if (!isBlockedByObstacle(player.x, nz, TANK_RADIUS)) player.z = nz;
       }
 
-      if (input.firing && now - player.lastFireTime >= player.stats.fireCooldown) {
-        player.lastFireTime = now;
-        this._spawnBullet(player);
+      if (input.firing) {
+        const weaponDef = WEAPON_TYPES[player.weapon.type] || WEAPON_TYPES.normal;
+        const cooldown = player.stats.fireCooldown * weaponDef.cooldownMult;
+        if (now - player.lastFireTime >= cooldown) {
+          player.lastFireTime = now;
+          this._fireWeapon(player, now);
+        }
       }
     }
 
@@ -335,6 +448,7 @@ class Game {
       bullet.z += bullet.vz * dt;
 
       let remove = false;
+      let detonateAt = null; // set when a splash weapon should explode this tick
 
       if (now - bullet.bornAt >= BULLET_LIFETIME_MS) remove = true;
       if (
@@ -346,6 +460,7 @@ class Game {
       if (!remove && isBlockedByObstacle(bullet.x, bullet.z, BULLET_RADIUS)) {
         remove = true;
       }
+      if (remove && bullet.splashRadius > 0) detonateAt = { x: bullet.x, z: bullet.z };
 
       if (!remove) {
         for (const target of this.players.values()) {
@@ -355,35 +470,46 @@ class Game {
           const distSq = dx * dx + dz * dz;
           const hitDist = TANK_RADIUS + BULLET_RADIUS;
           if (distSq <= hitDist * hitDist) {
-            target.hp -= bullet.damage;
             remove = true;
-            if (target.hp <= 0) {
-              target.hp = 0;
-              target.alive = false;
-              target.deathTime = now;
-              target.deaths++;
-              const killer = this.players.get(bullet.ownerId);
-              if (killer) killer.kills++;
-              this.events.push({
-                type: 'kill',
-                killerId: bullet.ownerId,
-                killerName: killer ? killer.name : 'Unknown',
-                victimId: target.id,
-                victimName: target.name,
-              });
+            if (bullet.splashRadius > 0) {
+              detonateAt = { x: bullet.x, z: bullet.z };
             } else {
-              this.events.push({
-                type: 'hit',
-                attackerId: bullet.ownerId,
-                victimId: target.id,
-              });
+              this._applyDamage(bullet, target, bullet.damage, now);
             }
             break;
           }
         }
       }
 
+      if (detonateAt) {
+        // Splash never hits the owner (no self-damage), and isn't reduced
+        // by distance within the radius — simple and predictable.
+        for (const target of this.players.values()) {
+          if (!target.alive || target.id === bullet.ownerId) continue;
+          const dx = target.x - detonateAt.x;
+          const dz = target.z - detonateAt.z;
+          if (dx * dx + dz * dz <= bullet.splashRadius * bullet.splashRadius) {
+            this._applyDamage(bullet, target, bullet.damage * bullet.splashDamageMult, now);
+          }
+        }
+      }
+
       if (remove) this.bullets.delete(bullet.id);
+    }
+
+    this._maintainPickups(now);
+    for (const player of this.players.values()) {
+      if (!player.alive) continue;
+      for (const pickup of this.pickups.values()) {
+        const dx = player.x - pickup.x;
+        const dz = player.z - pickup.z;
+        const hitDist = TANK_RADIUS + PICKUP_RADIUS;
+        if (dx * dx + dz * dz <= hitDist * hitDist) {
+          this._collectPickup(player, pickup, now);
+          this.pickups.delete(pickup.id);
+          break;
+        }
+      }
     }
 
     if (this.mode === 'campaign' && !this.finished) {
@@ -426,12 +552,26 @@ class Game {
         kills: p.kills,
         deaths: p.deaths,
         color: p.color,
+        armorActive: p.armor.active,
+        armorExpiresAt: p.armor.expiresAt,
+        weaponType: p.weapon.type,
+        weaponExpiresAt: p.weapon.expiresAt,
       })),
       bullets: Array.from(this.bullets.values()).map((b) => ({
         id: b.id,
         x: b.x,
         z: b.z,
+        vx: b.vx,
+        vz: b.vz,
         ownerId: b.ownerId,
+        kind: b.kind,
+        color: b.color,
+      })),
+      pickups: Array.from(this.pickups.values()).map((pk) => ({
+        id: pk.id,
+        kind: pk.kind,
+        x: pk.x,
+        z: pk.z,
       })),
     };
   }

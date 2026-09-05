@@ -6,7 +6,9 @@
 const TICK_RATE = 20; // physics/network ticks per second
 const TICK_MS = 1000 / TICK_RATE;
 
-const ARENA_HALF_SIZE = 60; // world spans [-60, 60] on X and Z
+const ARENA_HALF_SIZE = 75; // world spans [-75, 75] on X and Z — a 25% wider
+// arena than the original [-60,60] (see OBSTACLES below for the richer,
+// mirror-symmetric terrain that fills the extra space).
 
 // Tank meshes render at 0.4x their original modeled size (see
 // createTankMesh's tankGroup.scale in client.js) — the hitbox shrinks with
@@ -19,35 +21,88 @@ const BULLET_RADIUS = 0.4;
 const BULLET_SPEED = 70; // units/sec
 const BULLET_LIFETIME_MS = 2200;
 
-// Static cover boxes. Shared with the client for rendering and used
-// server-side for tank/bullet collision.
+// Static cover boxes. Shared with the client for rendering (client.js's
+// buildObstacles renders each `type` with a distinct look) and used
+// server-side for tank/bullet collision (AABB, `type` is cosmetic only).
+// Kept 4-fold mirror-symmetric (x -> -x, z -> -z) so neither side of the
+// arena — including the two Team Deathmatch spawn ends — has a cover
+// advantage.
 const OBSTACLES = [
-  { x: -20, z: -20, w: 8, d: 8, h: 4 },
-  { x: 20, z: -20, w: 8, d: 8, h: 4 },
-  { x: -20, z: 20, w: 8, d: 8, h: 4 },
-  { x: 20, z: 20, w: 8, d: 8, h: 4 },
-  { x: 0, z: 0, w: 10, d: 4, h: 5 },
-  { x: -38, z: 0, w: 4, d: 18, h: 4 },
-  { x: 38, z: 0, w: 4, d: 18, h: 4 },
-  { x: 0, z: -42, w: 18, d: 4, h: 4 },
-  { x: 0, z: 42, w: 18, d: 4, h: 4 },
+  // Corner crate clusters (original 4, moved outward for the bigger arena).
+  { x: -25, z: -25, w: 8, d: 8, h: 4, type: 'crate' },
+  { x: 25, z: -25, w: 8, d: 8, h: 4, type: 'crate' },
+  { x: -25, z: 25, w: 8, d: 8, h: 4, type: 'crate' },
+  { x: 25, z: 25, w: 8, d: 8, h: 4, type: 'crate' },
+  // Central bunker pair with a lane between them (was a single small box).
+  { x: 0, z: -8, w: 10, d: 4, h: 5, type: 'bunker' },
+  { x: 0, z: 8, w: 10, d: 4, h: 5, type: 'bunker' },
+  // Extra crate cover flanking the vertical mid-lane.
+  { x: 0, z: -38, w: 8, d: 8, h: 4, type: 'crate' },
+  { x: 0, z: 38, w: 8, d: 8, h: 4, type: 'crate' },
+  // Long outer walls (original 4, moved outward).
+  { x: -47, z: 0, w: 4, d: 18, h: 4, type: 'wall' },
+  { x: 47, z: 0, w: 4, d: 18, h: 4, type: 'wall' },
+  { x: 0, z: -53, w: 18, d: 4, h: 4, type: 'wall' },
+  { x: 0, z: 53, w: 18, d: 4, h: 4, type: 'wall' },
+  // Mid-field watchtowers (8-fold symmetric ring) — break up long sightlines
+  // across the wider arena without blocking any single lane completely.
+  { x: 38, z: 14, w: 3, d: 3, h: 8, type: 'tower' },
+  { x: -38, z: 14, w: 3, d: 3, h: 8, type: 'tower' },
+  { x: 38, z: -14, w: 3, d: 3, h: 8, type: 'tower' },
+  { x: -38, z: -14, w: 3, d: 3, h: 8, type: 'tower' },
+  { x: 14, z: 38, w: 3, d: 3, h: 8, type: 'tower' },
+  { x: -14, z: 38, w: 3, d: 3, h: 8, type: 'tower' },
+  { x: 14, z: -38, w: 3, d: 3, h: 8, type: 'tower' },
+  { x: -14, z: -38, w: 3, d: 3, h: 8, type: 'tower' },
 ];
 
+// Kept at least ~15 units clear of the boundary wall (at ±ARENA_HALF_SIZE):
+// a freshly-spawned tank faces straight toward the arena center, and the
+// third-person chase camera sits ~10.5 units BEHIND that facing (see
+// client.js's updateCamera: CAM_DIST * cos(camPitch)) — too little margin
+// here puts the camera inside the boundary wall for the first instant after
+// spawning/respawning.
 const SPAWN_POINTS = [
-  { x: -50, z: -50 },
-  { x: 50, z: -50 },
-  { x: -50, z: 50 },
-  { x: 50, z: 50 },
-  { x: 0, z: -52 },
-  { x: 0, z: 52 },
-  { x: -52, z: 0 },
-  { x: 52, z: 0 },
+  { x: -58, z: -58 },
+  { x: 58, z: -58 },
+  { x: -58, z: 58 },
+  { x: 58, z: 58 },
+  { x: 0, z: -60 },
+  { x: 0, z: 60 },
+  { x: -60, z: 0 },
+  { x: 60, z: 0 },
 ];
+
+// Team Deathmatch (section: team mode) spawns each side along one edge of
+// the arena, facing the opposite side, well clear of every OBSTACLES entry
+// above AND (see SPAWN_POINTS' comment) far enough from the boundary wall
+// that the spawn-facing chase camera doesn't clip into it.
+const TEAM_SPAWN_POINTS = {
+  red: [
+    { x: -60, z: -60 },
+    { x: -30, z: -60 },
+    { x: 0, z: -60 },
+    { x: 30, z: -60 },
+    { x: 60, z: -60 },
+  ],
+  blue: [
+    { x: -60, z: 60 },
+    { x: -30, z: 60 },
+    { x: 0, z: 60 },
+    { x: 30, z: 60 },
+    { x: 60, z: 60 },
+  ],
+};
 
 const PLAYER_COLORS = [
   0xe74c3c, 0x3498db, 0x2ecc71, 0xf1c40f,
   0x9b59b6, 0x1abc9c, 0xe67e22, 0xecf0f1,
 ];
+
+// Team Deathmatch tank colors — every player on a side renders in the same
+// color instead of PLAYER_COLORS' per-player round robin, so teammates are
+// instantly recognizable at a glance.
+const TEAM_COLORS = { red: 0xe74c3c, blue: 0x3498db };
 
 // ---------------------------------------------------------------------
 // Equipment upgrades ("nâng cấp trang bị"). Each track has 6 levels
@@ -774,12 +829,13 @@ const DROP_TABLES = {
 };
 
 const PICKUP_SPAWN_POINTS = [
-  { x: 0, z: -20 }, { x: 0, z: 20 },
-  { x: -15, z: 0 }, { x: 15, z: 0 },
-  { x: 30, z: 30 }, { x: -30, z: 30 }, { x: 30, z: -30 }, { x: -30, z: -30 },
-  { x: 0, z: -32 }, { x: 0, z: 32 },
-  { x: 45, z: 0 }, { x: -45, z: 0 },
-  { x: 12, z: 12 }, { x: -12, z: -12 }, { x: 12, z: -12 }, { x: -12, z: 12 },
+  { x: 0, z: -25 }, { x: 0, z: 25 },
+  { x: -19, z: 0 }, { x: 19, z: 0 },
+  { x: 38, z: 38 }, { x: -38, z: 38 }, { x: 38, z: -38 }, { x: -38, z: -38 },
+  { x: 0, z: -40 }, { x: 0, z: 40 },
+  { x: 56, z: 0 }, { x: -56, z: 0 },
+  { x: 15, z: 15 }, { x: -15, z: -15 }, { x: 15, z: -15 }, { x: -15, z: 15 },
+  { x: 65, z: 65 }, { x: -65, z: 65 }, { x: 65, z: -65 }, { x: -65, z: -65 },
 ];
 
 const PICKUP_RADIUS = 1.4;
@@ -955,7 +1011,9 @@ module.exports = {
   BULLET_LIFETIME_MS,
   OBSTACLES,
   SPAWN_POINTS,
+  TEAM_SPAWN_POINTS,
   PLAYER_COLORS,
+  TEAM_COLORS,
   MAX_UPGRADE_LEVEL,
   UPGRADES,
   UPGRADE_COST,

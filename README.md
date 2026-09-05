@@ -58,10 +58,22 @@ Vũ khí đặc biệt có tác dụng trong 25 giây rồi tự quay lại phá
 ## Chế độ chơi
 
 - **⚔️ Đấu trường (PvP)**: nhiều người chơi đấu tự do trong cùng một phòng, hạ gục nhau để tính điểm, hồi sinh sau khi chết. Không có kẻ địch AI, không kiếm được Xu ở chế độ này.
+- **🚩 Tổ đội (Team Deathmatch)**: người chơi được tự động chia đều vào **🔴 Đội Đỏ** hoặc **🔵 Đội Xanh** (hệ thống luôn xếp bạn vào đội đang ít người hơn để cân bằng quân số), mỗi đội hồi sinh ở một đầu bản đồ riêng và toàn bộ xe tăng cùng đội đều chung một màu để dễ nhận diện. Đạn/kỹ năng của bạn **không gây sát thương cho đồng đội** (bao gồm cả đạn nổ văng mảnh, tia sét dây chuyền, vũ khí hỗ trợ tự động...). Bảng xếp hạng chia theo đội, mỗi đội hiển thị tổng điểm (tổng số hạ gục) và danh sách thành viên riêng.
 - **🎯 Chiến dịch (Vượt ải, PvE)**: chơi một mình, đấu với xe tăng điều khiển bởi AI theo từng ải (8 ải, độ khó tăng dần). Hạ hết địch trong ải để **nhận thưởng Xu** và mở khoá ải tiếp theo; nếu xe của bạn bị hạ, ải thất bại và có thể chơi lại. AI địch sẽ đuổi theo, né chướng ngại vật cơ bản, và ngắm bắn với độ chính xác tuỳ độ khó (Dễ/Vừa/Khó).
-- **🔧 Gara nâng cấp**: dùng Xu kiếm được từ Chiến dịch để nâng cấp 4 chỉ số của xe tăng (mỗi chỉ số 5 cấp): **Sức mạnh** (sát thương đạn), **Phòng thủ** (máu tối đa), **Nhanh nhẹn** (tốc độ di chuyển), **Tốc độ bắn** (giảm thời gian hồi chiêu). Trang bị đã nâng cấp áp dụng ở cả hai chế độ.
+- **🔧 Gara nâng cấp**: dùng Xu kiếm được từ Chiến dịch để nâng cấp 4 chỉ số của xe tăng (mỗi chỉ số 5 cấp): **Sức mạnh** (sát thương đạn), **Phòng thủ** (máu tối đa), **Nhanh nhẹn** (tốc độ di chuyển), **Tốc độ bắn** (giảm thời gian hồi chiêu). Trang bị đã nâng cấp áp dụng ở cả ba chế độ.
 
 Tiến trình (tên, Xu, cấp trang bị, ải đã mở khoá) được lưu trong `localStorage` của trình duyệt — không cần đăng nhập, nhưng cũng không đồng bộ giữa các thiết bị/trình duyệt khác nhau, và không có xác thực server nên đây chỉ là kinh tế trong game mang tính giải trí (không phải tiền thật, không chống gian lận tuyệt đối cho PvP).
+
+## Bản đồ
+
+Đấu trường rộng 150×150 (tăng 25% so với trước), với địa hình đa dạng hơn và **đối xứng gương hai trục** để công bằng cho cả Đấu trường lẫn Tổ đội:
+
+- **📦 Thùng hàng** (crate): cụm 4 góc bản đồ + 2 thùng dọc trục giữa — cao vừa, che khuất một phần thân xe.
+- **🏚️ Boong-ke** (bunker): cặp công sự trung tâm tạo một lối đi hẹp — điểm giao tranh trọng yếu giữa bản đồ.
+- **🧱 Tường dài** (wall): 4 bức tường dài ở rìa bản đồ, chắn tầm nhìn xa giữa các khu vực.
+- **🗼 Tháp canh** (tower): 8 cột tháp mảnh rải quanh khu vực giữa sân, phá tầm ngắm thẳng của các loại đạn tầm xa (đạn tỉa, laser) mà không chặn hẳn một hướng nào.
+
+Mỗi loại vật cản có hình dáng/màu sắc riêng để dễ phân biệt từ xa; toàn bộ vẫn dùng chung một bản đồ nền cho mọi chế độ (không có bản đồ riêng theo ải/chương, chỉ đổi tông màu bầu trời — xem code comment trong `server/constants.js`).
 
 ## Deploy để chơi thử online (Render)
 

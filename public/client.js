@@ -632,6 +632,7 @@ const menuCurrencyEl = document.getElementById('menuCurrency');
 const menuNameEl = document.getElementById('menuName');
 const changeNameLinkEl = document.getElementById('changeNameLink');
 const btnArenaEl = document.getElementById('btnArena');
+const btnTeamEl = document.getElementById('btnTeam');
 const btnCampaignEl = document.getElementById('btnCampaign');
 const btnGarageEl = document.getElementById('btnGarage');
 const difficultyRowEl = document.getElementById('difficultyRow');
@@ -656,6 +657,7 @@ const bossHudBarEl = document.getElementById('bossHudBar');
 const bossHudPhasePipsEl = document.getElementById('bossHudPhasePips');
 const bossTelegraphEl = document.getElementById('bossTelegraphEl');
 const hudCurrencyValueEl = document.getElementById('hudCurrencyValue');
+const teamBadgeEl = document.getElementById('teamBadge');
 const menuLeaveBtnEl = document.getElementById('menuLeaveBtn');
 const muteBtnEl = document.getElementById('muteBtn');
 const minimapEl = document.getElementById('minimap');
@@ -846,17 +848,54 @@ function buildBoundaryWalls() {
   }
 }
 
+// Cosmetic look per obstacle `type` (server/constants.js's OBSTACLES) — all
+// four share the same box collision AABB server-side, this only changes how
+// each renders: 'crate' keeps the original two-tone box+cap, 'bunker'/'wall'
+// reuse that same box+cap shape in a different concrete tone, and 'tower'
+// renders as a cylinder (a watchtower silhouette) instead of a box so the
+// bigger arena's mid-field cover reads as visually distinct terrain, not
+// just more crates.
+const OBSTACLE_LOOKS = {
+  crate: { base: 0x8a7a5c, cap: 0x6b5d45 },
+  bunker: { base: 0x5c6670, cap: 0x454d55 },
+  wall: { base: 0x707880, cap: 0x545a60 },
+  tower: { base: 0x8a5a3f, cap: 0x6b4530 },
+};
+
 function buildObstacles(list) {
-  const baseMat = new THREE.MeshStandardMaterial({ color: 0x8a7a5c, roughness: 0.95 });
-  const capMat = new THREE.MeshStandardMaterial({ color: 0x6b5d45, roughness: 0.9 });
+  const matCache = new Map();
+  const matFor = (color) => {
+    let m = matCache.get(color);
+    if (!m) {
+      m = new THREE.MeshStandardMaterial({ color, roughness: 0.9 });
+      matCache.set(color, m);
+    }
+    return m;
+  };
   for (const o of list) {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(o.w, o.h, o.d), baseMat);
+    const look = OBSTACLE_LOOKS[o.type] || OBSTACLE_LOOKS.crate;
+    const baseMat = matFor(look.base);
+    const capMat = matFor(look.cap);
+
+    let mesh;
+    if (o.type === 'tower') {
+      const radius = Math.min(o.w, o.d) / 2;
+      mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius * 1.15, o.h, 10), baseMat);
+    } else {
+      mesh = new THREE.Mesh(new THREE.BoxGeometry(o.w, o.h, o.d), baseMat);
+    }
     mesh.position.set(o.x, o.h / 2, o.z);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     scene.add(mesh);
 
-    const cap = new THREE.Mesh(new THREE.BoxGeometry(o.w + 0.3, 0.3, o.d + 0.3), capMat);
+    let cap;
+    if (o.type === 'tower') {
+      const radius = Math.min(o.w, o.d) / 2;
+      cap = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.4, radius * 1.4, 0.3, 10), capMat);
+    } else {
+      cap = new THREE.Mesh(new THREE.BoxGeometry(o.w + 0.3, 0.3, o.d + 0.3), capMat);
+    }
     cap.position.set(o.x, o.h + 0.15, o.z);
     cap.castShadow = true;
     cap.receiveShadow = true;
@@ -1374,6 +1413,7 @@ function ensureEntity(id, color) {
     target: { x: 0, z: 0, bodyRot: 0, turretRot: 0 },
     alive: true,
     name: '',
+    team: null,
     isBot: false,
     maxHp: 100,
     hp: 100,
@@ -1708,6 +1748,7 @@ changeNameLinkEl.addEventListener('click', (e) => {
 });
 
 btnArenaEl.addEventListener('click', () => joinGame({ mode: 'arena' }));
+btnTeamEl.addEventListener('click', () => joinGame({ mode: 'team' }));
 btnCampaignEl.addEventListener('click', () => {
   renderStages();
   showPanel('stages');
@@ -1759,10 +1800,12 @@ socket.on('joinError', (err) => {
 // ---------- Game state sync ----------
 function applySnapshot(snapshot, isInit) {
   const seen = new Set();
+  const selfTeam = (snapshot.players.find((sp) => sp.id === selfId) || {}).team || null;
   for (const p of snapshot.players) {
     seen.add(p.id);
     const e = ensureEntity(p.id, p.color);
     e.name = p.name;
+    e.team = p.team || null;
     e.isBot = !!p.isBot;
     e.role = p.role || null;
     e.isElite = !!p.isElite;
@@ -1770,7 +1813,9 @@ function applySnapshot(snapshot, isInit) {
     e.bossPhase = p.bossPhase || 0;
     e.bossEnraged = !!p.bossEnraged;
     e.bossInvuln = !!p.bossInvuln;
-    e.nameTagEl.className = 'nameTag' + (p.isBoss ? ' boss' : p.isElite ? ' elite' : p.isBot ? ' bot' : '');
+    const isTeammate = !!(selfTeam && e.team === selfTeam && p.id !== selfId);
+    e.nameTagEl.className =
+      'nameTag' + (p.isBoss ? ' boss' : p.isElite ? ' elite' : p.isBot ? ' bot' : '') + (isTeammate ? ' teammate' : '');
     const namePrefix = p.isBoss ? '👑 ' : p.isElite ? '⭐ ' : '';
     e.nameLabel.textContent = namePrefix + p.name + (p.id === selfId ? ' (bạn)' : '');
     e.target.x = p.x;
@@ -1820,6 +1865,10 @@ function applySnapshot(snapshot, isInit) {
 }
 
 function updateScoreboard(players) {
+  if (players.some((p) => p.team)) {
+    updateTeamScoreboard(players);
+    return;
+  }
   const sorted = players.slice().sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
   let html = '<div class="hdr">Bảng xếp hạng</div>';
   for (const p of sorted.slice(0, 8)) {
@@ -1827,6 +1876,22 @@ function updateScoreboard(players) {
     html += `<div class="row ${cls}"><span>${escapeHtml(p.name)}</span><span>${p.kills}/${p.deaths}</span></div>`;
   }
   scoreboardEl.innerHTML = html;
+}
+
+// Team Deathmatch scoreboard: two sections, each headed by the side's total
+// kill count (its "team score"), players sorted by personal kills within.
+function updateTeamScoreboard(players) {
+  const section = (team, label, cssClass) => {
+    const side = players.filter((p) => p.team === team).sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+    const score = side.reduce((sum, p) => sum + p.kills, 0);
+    let html = `<div class="hdr ${cssClass}">${label}: ${score} điểm</div>`;
+    for (const p of side.slice(0, 6)) {
+      const cls = p.id === selfId ? 'self' : '';
+      html += `<div class="row ${cls}"><span>${escapeHtml(p.name)}</span><span>${p.kills}/${p.deaths}</span></div>`;
+    }
+    return html;
+  };
+  scoreboardEl.innerHTML = section('red', '🔴 Đội Đỏ', 'team-red') + section('blue', '🔵 Đội Xanh', 'team-blue');
 }
 
 socket.on('init', (data) => {
@@ -2983,6 +3048,7 @@ function updateCamera(dt) {
 // a continuously-filling progress bar, so it must keep writing every frame
 // or the fill animation would freeze.
 let lastHudCurrency = null;
+let lastHudTeam = null;
 let lastHudStageName = null;
 let lastHudEnemiesRemaining = null;
 let lastHudHpPct = null;
@@ -3079,6 +3145,17 @@ function updateHud() {
   }
 
   if (!self) return;
+
+  if (self.team !== lastHudTeam) {
+    lastHudTeam = self.team;
+    if (self.team) {
+      teamBadgeEl.textContent = self.team === 'red' ? '🔴 Đội Đỏ' : '🔵 Đội Xanh';
+      teamBadgeEl.className = 'team-' + self.team;
+    } else {
+      teamBadgeEl.className = 'hidden';
+    }
+  }
+
   const hpPct = Math.max(0, Math.min(100, (self.hp / self.maxHp) * 100));
   if (hpPct !== lastHudHpPct) {
     lastHudHpPct = hpPct;

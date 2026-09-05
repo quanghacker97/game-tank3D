@@ -42,7 +42,7 @@ function cleanupSocketRoom(socket) {
   const game = RoomManager.getRoom(roomId);
   if (game) {
     game.removePlayer(socket.id);
-    if (mode === 'arena') io.to(roomId).emit('playerLeft', { id: socket.id });
+    if (mode === 'arena' || mode === 'team') io.to(roomId).emit('playerLeft', { id: socket.id });
   }
   if (mode === 'campaign') RoomManager.destroyRoom(roomId);
 
@@ -61,7 +61,8 @@ io.on('connection', (socket) => {
     const name = data && typeof data.name === 'string' ? data.name : 'Tank';
     const loadout = (data && data.loadout) || {};
     const perks = (data && data.perks) || {};
-    const mode = data && data.mode === 'campaign' ? 'campaign' : 'arena';
+    const mode =
+      data && data.mode === 'campaign' ? 'campaign' : data && data.mode === 'team' ? 'team' : 'arena';
 
     if (mode === 'campaign') {
       const stageNumber = Number(data && data.stage);
@@ -85,6 +86,22 @@ io.on('connection', (socket) => {
         snapshot: game.snapshot(),
         stageStatus: game.getStageStatus(),
       });
+    } else if (mode === 'team') {
+      const game = RoomManager.getTeamGame();
+      const team = game.assignTeam();
+      const player = game.addPlayer(socket.id, name, loadout, perks, team);
+      socket.join(RoomManager.TEAM_ROOM_ID);
+      socket.data.roomId = RoomManager.TEAM_ROOM_ID;
+      socket.data.mode = 'team';
+
+      socket.emit('init', {
+        selfId: socket.id,
+        mode: 'team',
+        arenaHalfSize: ARENA_HALF_SIZE,
+        obstacles: OBSTACLES,
+        snapshot: game.snapshot(),
+      });
+      socket.to(RoomManager.TEAM_ROOM_ID).emit('playerJoined', { id: player.id, name: player.name });
     } else {
       const game = RoomManager.getArenaGame();
       const player = game.addPlayer(socket.id, name, loadout, perks);

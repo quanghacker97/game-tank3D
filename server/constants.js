@@ -168,9 +168,145 @@ const WEAPON_TYPES = {
     splashDamageMult: 0.6,
     color: 0xff4d4d,
   },
+  // ---- New ammo types -----------------------------------------------
+  ap: {
+    label: 'Xuyên giáp (AP)',
+    bulletSpeed: 150,
+    damageMult: 0.85,
+    cooldownMult: 1.5,
+    bulletsPerShot: 1,
+    spreadAngle: 0,
+    splashRadius: 0,
+    color: 0xd8d8d8,
+    pierceCount: 2, // can pass through this many enemies before disappearing
+    pierceDamageFalloff: 0.7, // each successive hit deals (prev * this) damage
+  },
+  shock: {
+    label: 'Đạn điện (Shock)',
+    bulletSpeed: 95,
+    damageMult: 0.7,
+    cooldownMult: 1.5,
+    bulletsPerShot: 1,
+    spreadAngle: 0,
+    splashRadius: 0,
+    color: 0x63d2ff,
+    shockRadius: 6,
+    shockSlowMult: 0.5, // victim moves at 50% speed
+    shockDurationMs: 2000,
+    shockDisableFireMs: 1200, // victim's own weapon is disabled for this long
+  },
+  missile: {
+    label: 'Tên lửa tự dẫn',
+    bulletSpeed: 55,
+    damageMult: 1.3,
+    cooldownMult: 2.2,
+    bulletsPerShot: 1,
+    spreadAngle: 0,
+    splashRadius: 3,
+    splashDamageMult: 0.5,
+    color: 0xff9a3d,
+    homing: true,
+    homingTurnRateRadPerSec: 2.4, // capped steering — subtle, never a snap/180
+    homingConeAngle: 0.9, // ~51deg search cone in front of the missile
+    homingRange: 55,
+  },
+  ricochet: {
+    label: 'Đạn dội tường',
+    bulletSpeed: 85,
+    damageMult: 0.8,
+    cooldownMult: 1.4,
+    bulletsPerShot: 1,
+    spreadAngle: 0,
+    splashRadius: 0,
+    color: 0xb6ff5c,
+    bounceCount: 3,
+    bounceDamageMult: 0.7, // damage carried into the NEXT bounce
+    bounceSpeedMult: 0.92,
+  },
+  cryo: {
+    label: 'Đạn đóng băng (Cryo)',
+    bulletSpeed: 80,
+    damageMult: 0.65,
+    cooldownMult: 1.4,
+    bulletsPerShot: 1,
+    spreadAngle: 0,
+    splashRadius: 0,
+    color: 0x9fe8ff,
+    cryoSlowPerStack: 0.18, // each stacked hit adds this much slow...
+    cryoMaxStacks: 3, // ...up to this many stacks (54% max slow)
+    cryoDurationMs: 2500,
+  },
 };
 
 const WEAPON_BUFF_DURATION_MS = 25000;
+
+// Explosive/missile splash: linear falloff from full damage at the center
+// to SPLASH_FALLOFF_MIN at the edge of the radius, and blocked entirely by
+// walls (no damage through solid cover even inside the radius).
+const SPLASH_FALLOFF_MIN = 0.1;
+
+// ---------------------------------------------------------------------
+// Temporary automatic support weapons (turret/drone/missile-pod/orbital/
+// sentinel pickups). One shared targeting+firing loop in Game.js drives
+// all of them — they differ only by the numbers below (data-driven, no
+// per-type script duplication). `modules` > 1 means several independent
+// firing slots (each with its own cooldown) active at once, e.g. the
+// orbital support's ring of mini-turrets.
+// ---------------------------------------------------------------------
+const SUPPORT_TYPES = {
+  turret: {
+    label: 'Auto Turret',
+    rarity: 'common',
+    durationMs: 18000,
+    fireCooldownMs: 900,
+    damage: 18,
+    bulletSpeed: 70,
+    range: 40,
+    modules: 1,
+  },
+  drone: {
+    label: 'Combat Drone',
+    rarity: 'common',
+    durationMs: 20000,
+    fireCooldownMs: 700,
+    damage: 14,
+    bulletSpeed: 90,
+    range: 35,
+    modules: 1,
+  },
+  missilepod: {
+    label: 'Missile Pod',
+    rarity: 'rare',
+    durationMs: 13000,
+    fireCooldownMs: 1800,
+    damage: 32,
+    bulletSpeed: 55,
+    range: 50,
+    modules: 1,
+    homing: true,
+  },
+  orbital: {
+    label: 'Orbital Support',
+    rarity: 'rare',
+    durationMs: 12000,
+    fireCooldownMs: 1300,
+    damage: 12,
+    bulletSpeed: 80,
+    range: 30,
+    modules: 3, // 3 independent orbiting modules, each firing on its own cooldown
+  },
+  sentinel: {
+    label: 'Sentinel',
+    rarity: 'epic',
+    durationMs: 10000,
+    fireCooldownMs: 2200,
+    damage: 55,
+    bulletSpeed: 100,
+    range: 55,
+    modules: 1,
+    preferLockedTarget: true, // prioritizes the owner's client-side locked target when valid
+  },
+};
 
 // ---------------------------------------------------------------------
 // Pickups: armor (damage reduction) + one pickup per special weapon.
@@ -188,7 +324,30 @@ const PICKUP_TYPES = {
   weapon_sniper: { kind: 'weapon', weapon: 'sniper', label: 'Đạn tỉa', color: 0xfff066 },
   weapon_spread: { kind: 'weapon', weapon: 'spread', label: 'Đạn tỏa 3 viên', color: 0xff8a3d },
   weapon_explosive: { kind: 'weapon', weapon: 'explosive', label: 'Đạn nổ', color: 0xff4d4d },
+  // ---- New ammo pickups ("Ammo Box") ----
+  weapon_ap: { kind: 'weapon', weapon: 'ap', label: 'Xuyên giáp', color: 0xd8d8d8 },
+  weapon_shock: { kind: 'weapon', weapon: 'shock', label: 'Đạn điện', color: 0x63d2ff },
+  weapon_missile: { kind: 'weapon', weapon: 'missile', label: 'Tên lửa tự dẫn', color: 0xff9a3d },
+  weapon_ricochet: { kind: 'weapon', weapon: 'ricochet', label: 'Đạn dội tường', color: 0xb6ff5c },
+  weapon_cryo: { kind: 'weapon', weapon: 'cryo', label: 'Đạn đóng băng', color: 0x9fe8ff },
+  // ---- Support-weapon crates (rarer, visually distinct on the client) ----
+  support_turret: { kind: 'support', support: 'turret', label: 'Auto Turret', color: 0xffb020, rarity: 'common' },
+  support_drone: { kind: 'support', support: 'drone', label: 'Combat Drone', color: 0x4dd0ff, rarity: 'common' },
+  support_missilepod: {
+    kind: 'support',
+    support: 'missilepod',
+    label: 'Missile Pod',
+    color: 0xff5c3d,
+    rarity: 'rare',
+  },
+  support_orbital: { kind: 'support', support: 'orbital', label: 'Orbital Support', color: 0xb35cff, rarity: 'rare' },
+  support_sentinel: { kind: 'support', support: 'sentinel', label: 'Sentinel', color: 0xffe14d, rarity: 'epic' },
 };
+
+// Spawn weighting so support crates (powerful) come up far less often than
+// ordinary buffs/ammo (a pickup with no explicit `rarity` above defaults to
+// 'common'). See Game.js#_maintainPickups.
+const PICKUP_RARITY_WEIGHT = { common: 10, rare: 4, epic: 1 };
 
 const PICKUP_SPAWN_POINTS = [
   { x: 0, z: -20 }, { x: 0, z: 20 },
@@ -248,7 +407,10 @@ module.exports = {
   STAGES,
   WEAPON_TYPES,
   WEAPON_BUFF_DURATION_MS,
+  SPLASH_FALLOFF_MIN,
+  SUPPORT_TYPES,
   PICKUP_TYPES,
+  PICKUP_RARITY_WEIGHT,
   PICKUP_SPAWN_POINTS,
   PICKUP_RADIUS,
   MAX_ACTIVE_PICKUPS,

@@ -11,9 +11,22 @@ const JOYSTICK_RADIUS = 48; // px, matches #touchJoystickBase knob travel
 const CAM_DIST = 11;
 const CAM_BASE_HEIGHT = 3;
 const BASE_FOV = 65;
+
+// ---- RMB = ADS/zoom (fully independent of target-lock) ----
+const ADS_FOV = 54; // moderate ~17% narrower than BASE_FOV — precision, not binoculars
+const ADS_SENS_MULT = 0.62; // slower/more precise mouse while ADS-zoomed
+const ADS_CAM_DIST_MULT = 0.92; // slight lean-in, kept subtle so the map stays readable
+const ADS_TRANSITION_SPEED = 9; // higher = snappier ease in/out of ADS, still not an instant pop
+
+// ---- LMB+RMB = target lock/focus (fully independent of ADS/zoom) ----
 const LOCK_TURN_RATE = 3.0; // rad/sec turret assist-tracking speed while target-locked
 const LOCK_MAX_RANGE = 90;
 const LOCK_MAX_ANGLE = 0.3; // rad (~17deg) cone around the aim direction for LMB+RMB target acquisition
+const LOCK_COMBO_WINDOW_MS = 220; // max gap between the two buttons for it to count as one lock chord
+
+// ---- Minimap (player-centered, rotates with the player's authoritative
+// bodyRot — see updateMinimap; fully independent of ADS/target-lock) ----
+const MINIMAP_RANGE = 70; // world units from the player to the minimap edge
 
 
 const MAX_UPGRADE_LEVEL = 5;
@@ -42,6 +55,11 @@ const WEAPON_META = {
   sniper: { icon: '🔭', label: 'Đạn tỉa', cooldownMult: 2.6 },
   spread: { icon: '🎇', label: 'Đạn tỏa 3 viên', cooldownMult: 1.3 },
   explosive: { icon: '💣', label: 'Đạn nổ', cooldownMult: 1.9 },
+  ap: { icon: '🛠️', label: 'Xuyên giáp', cooldownMult: 1.5 },
+  shock: { icon: '⚡', label: 'Đạn điện', cooldownMult: 1.5 },
+  missile: { icon: '🚀', label: 'Tên lửa tự dẫn', cooldownMult: 2.2 },
+  ricochet: { icon: '🔰', label: 'Đạn dội tường', cooldownMult: 1.4 },
+  cryo: { icon: '❄️', label: 'Đạn đóng băng', cooldownMult: 1.4 },
 };
 
 const PICKUP_META = {
@@ -54,7 +72,36 @@ const PICKUP_META = {
   weapon_sniper: { icon: '🔭', label: 'Đạn tỉa', color: 0xfff066 },
   weapon_spread: { icon: '🎇', label: 'Đạn tỏa 3 viên', color: 0xff8a3d },
   weapon_explosive: { icon: '💣', label: 'Đạn nổ', color: 0xff4d4d },
+  weapon_ap: { icon: '🛠️', label: 'Xuyên giáp', color: 0xd8d8d8 },
+  weapon_shock: { icon: '⚡', label: 'Đạn điện', color: 0x63d2ff },
+  weapon_missile: { icon: '🚀', label: 'Tên lửa tự dẫn', color: 0xff9a3d },
+  weapon_ricochet: { icon: '🔰', label: 'Đạn dội tường', color: 0xb6ff5c },
+  weapon_cryo: { icon: '❄️', label: 'Đạn đóng băng', color: 0x9fe8ff },
+  // Support-weapon crates — visually larger/brighter markers (see
+  // createPickupMesh) so they read as a special, rarer find on sight.
+  support_turret: { icon: '🗼', label: 'Auto Turret', color: 0xffb020, support: true },
+  support_drone: { icon: '🛸', label: 'Combat Drone', color: 0x4dd0ff, support: true },
+  support_missilepod: { icon: '🚀', label: 'Missile Pod', color: 0xff5c3d, support: true },
+  support_orbital: { icon: '🪐', label: 'Orbital Support', color: 0xb35cff, support: true },
+  support_sentinel: { icon: '👁️', label: 'Sentinel', color: 0xffe14d, support: true },
 };
+
+// Small standalone table (label/icon only — duration/expiry always comes
+// from the server snapshot) for the support-weapon HUD panel and the
+// tank's support-aura indicator mesh.
+const SUPPORT_META = {
+  turret: { icon: '🗼', label: 'Auto Turret', color: 0xffb020 },
+  drone: { icon: '🛸', label: 'Combat Drone', color: 0x4dd0ff },
+  missilepod: { icon: '🚀', label: 'Missile Pod', color: 0xff5c3d },
+  orbital: { icon: '🪐', label: 'Orbital Support', color: 0xb35cff },
+  sentinel: { icon: '👁️', label: 'Sentinel', color: 0xffe14d },
+};
+// Precompute each kind's CSS hex string once (used by the minimap every
+// frame per visible pickup) instead of re-running toString(16)+padStart on
+// the same constant color value on every single render.
+for (const meta of Object.values(PICKUP_META)) {
+  meta.hex = '#' + meta.color.toString(16).padStart(6, '0');
+}
 
 // Timed-buff badge metadata for the HUD. Must mirror server/constants.js's
 // SPEED_BOOST_MULT/RAPID_FIRE_MULT so local movement/reload prediction
@@ -74,6 +121,18 @@ const BULLET_VISUALS = {
   sniper: { shape: 'bolt', length: 1.6, radius: 0.14, color: 0xfff066, emissive: 0xffe14d },
   spread: { shape: 'sphere', size: 0.28, color: 0xff8a3d, emissive: 0xff6a00 },
   explosive: { shape: 'sphere', size: 0.55, color: 0xff4d4d, emissive: 0xff2200 },
+  ap: { shape: 'bolt', length: 1.3, radius: 0.09, color: 0xd8d8d8, emissive: 0xaaaaaa },
+  shock: { shape: 'sphere', size: 0.32, color: 0x63d2ff, emissive: 0x2ea6ff },
+  missile: { shape: 'bolt', length: 1.1, radius: 0.16, color: 0xff9a3d, emissive: 0xff6a00 },
+  ricochet: { shape: 'sphere', size: 0.3, color: 0xb6ff5c, emissive: 0x8ef22c },
+  cryo: { shape: 'sphere', size: 0.34, color: 0x9fe8ff, emissive: 0x6cd4ff },
+  // Support-weapon projectiles all share one small, neutral bolt look — kept
+  // simple since they're secondary/automatic fire, not the player's own shot.
+  support_turret: { shape: 'sphere', size: 0.3, color: 0xffb020, emissive: 0xff8800 },
+  support_drone: { shape: 'sphere', size: 0.26, color: 0x4dd0ff, emissive: 0x2196c9 },
+  support_missilepod: { shape: 'bolt', length: 1.0, radius: 0.15, color: 0xff5c3d, emissive: 0xff3300 },
+  support_orbital: { shape: 'sphere', size: 0.24, color: 0xb35cff, emissive: 0x8a2be2 },
+  support_sentinel: { shape: 'bolt', length: 1.4, radius: 0.17, color: 0xffe14d, emissive: 0xffc400 },
 };
 const BULLET_HEIGHT = 0.68;
 
@@ -226,6 +285,14 @@ const Sound = (() => {
     [420, 320, 220].forEach((f, i) => playTone({ freq: f, type: 'sawtooth', duration: 0.22, gain: 0.25, delay: i * 0.14 }));
   }
 
+  function supportActivate() {
+    [440, 660, 880].forEach((f, i) => playTone({ freq: f, type: 'square', duration: 0.1, gain: 0.22, delay: i * 0.06 }));
+  }
+
+  function supportExpire() {
+    playTone({ freq: 500, endFreq: 180, type: 'triangle', duration: 0.28, gain: 0.2 });
+  }
+
   // Continuous soft engine drone; volume/pitch rise with movement input.
   let engineOsc = null;
   let engineGain = null;
@@ -265,7 +332,24 @@ const Sound = (() => {
     }
   }
 
-  return { resume, setMuted, isMuted, shot, hit, blocked, explosion, pickup, click, lowHealthBeep, stageClear, stageFailed, updateEngine, stopEngine };
+  return {
+    resume,
+    setMuted,
+    isMuted,
+    shot,
+    hit,
+    blocked,
+    explosion,
+    pickup,
+    click,
+    lowHealthBeep,
+    stageClear,
+    stageFailed,
+    supportActivate,
+    supportExpire,
+    updateEngine,
+    stopEngine,
+  };
 })();
 
 ['pointerdown', 'keydown', 'touchstart'].forEach((evt) => {
@@ -366,6 +450,11 @@ const reloadBar = document.getElementById('reloadBar');
 const weaponIconEl = document.getElementById('weaponIcon');
 const weaponLabelEl = document.getElementById('weaponLabel');
 const activeBuffsEl = document.getElementById('activeBuffs');
+const supportPanelEl = document.getElementById('supportPanel');
+const supportPanelIconEl = document.getElementById('supportPanelIcon');
+const supportPanelTypeEl = document.getElementById('supportPanelType');
+const supportPanelBarEl = document.getElementById('supportPanelBar');
+const supportPanelTimeEl = document.getElementById('supportPanelTime');
 const crosshairEl = document.getElementById('crosshair');
 const lockLabelEl = document.getElementById('lockLabel');
 const killfeedEl = document.getElementById('killfeed');
@@ -554,6 +643,24 @@ function buildObstacles(list) {
   }
 }
 
+// Frees GPU-side geometry/material buffers for every mesh in a subtree.
+// scene.remove() alone only unlinks an Object3D from the scene graph — the
+// WebGL buffers it owns are NOT freed until this is called, so every
+// removal site below (bullets, pickups, tanks) must pair scene.remove()
+// with this. Do NOT call this on anything using a shared/module-level
+// geometry or material (e.g. the burst effect's shared sphere geometry —
+// see updateBursts) since it would destroy a resource other live objects
+// still reference.
+function disposeObject3D(root) {
+  root.traverse((child) => {
+    if (child.geometry) child.geometry.dispose();
+    if (child.material) {
+      if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose());
+      else child.material.dispose();
+    }
+  });
+}
+
 // ---------- Tank factory ----------
 function createTankMesh(color) {
   const tankGroup = new THREE.Group();
@@ -676,12 +783,43 @@ function createTankMesh(color) {
   invulnMesh.visible = false;
   tankGroup.add(invulnMesh);
 
+  // Active support-weapon indicator — one ring whose color is set per-frame
+  // from SUPPORT_META (see updateEntityMeshes), so every support type reuses
+  // this same mesh instead of needing five bespoke models.
+  const supportMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.5,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const supportMesh = new THREE.Mesh(new THREE.TorusGeometry(2.6, 0.12, 8, 24), supportMat);
+  supportMesh.rotation.x = Math.PI / 2;
+  supportMesh.position.y = 3.4;
+  supportMesh.visible = false;
+  tankGroup.add(supportMesh);
+
+  // Slow/shock debuff indicator — a small ground ring, blue while slowed,
+  // flickering white/red while a shock's fire-disable is active.
+  const statusMat = new THREE.MeshBasicMaterial({
+    color: 0x4da8ff,
+    transparent: true,
+    opacity: 0.5,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const statusMesh = new THREE.Mesh(new THREE.RingGeometry(1.9, 2.15, 20), statusMat);
+  statusMesh.rotation.x = -Math.PI / 2;
+  statusMesh.position.y = 0.05;
+  statusMesh.visible = false;
+  tankGroup.add(statusMesh);
+
   tankGroup.add(bodyPivot);
   tankGroup.add(turretPivot);
   tankGroup.scale.setScalar(TANK_VISUAL_SCALE);
   scene.add(tankGroup);
 
-  return { tankGroup, bodyPivot, turretPivot, shieldMesh, invulnMesh };
+  return { tankGroup, bodyPivot, turretPivot, shieldMesh, invulnMesh, supportMesh, statusMesh };
 }
 
 // ---------- Bullet visuals ----------
@@ -708,15 +846,21 @@ function createBulletMesh(kind) {
 function createPickupMesh(kind) {
   const meta = PICKUP_META[kind] || PICKUP_META.armor;
   const group = new THREE.Group();
+  // Support-weapon crates read as visually special/rarer on sight (section
+  // 15): a larger, sharper-cut core with a brighter glow and a second outer
+  // ring, instead of the plain single-ring look every ordinary buff/ammo
+  // pickup uses.
+  const isSupport = !!meta.support;
 
   const coreMat = new THREE.MeshStandardMaterial({
     color: meta.color,
     emissive: meta.color,
-    emissiveIntensity: 0.65,
+    emissiveIntensity: isSupport ? 1.1 : 0.65,
     roughness: 0.3,
     metalness: 0.4,
   });
-  const core = new THREE.Mesh(new THREE.OctahedronGeometry(0.85, 0), coreMat);
+  const coreGeo = isSupport ? new THREE.IcosahedronGeometry(1.05, 0) : new THREE.OctahedronGeometry(0.85, 0);
+  const core = new THREE.Mesh(coreGeo, coreMat);
   core.castShadow = true;
   group.add(core);
 
@@ -731,10 +875,17 @@ function createPickupMesh(kind) {
   ring.position.y = 0.03;
   group.add(ring);
 
+  if (isSupport) {
+    const outerRing = new THREE.Mesh(new THREE.RingGeometry(1.55, 1.75, 24), ringMat);
+    outerRing.rotation.x = -Math.PI / 2;
+    outerRing.position.y = 0.05;
+    group.add(outerRing);
+  }
+
   scene.add(group);
 
   const labelEl = document.createElement('div');
-  labelEl.className = 'pickupLabel';
+  labelEl.className = 'pickupLabel' + (isSupport ? ' pickupLabelSupport' : '');
   labelEl.textContent = meta.icon;
   document.body.appendChild(labelEl);
 
@@ -742,10 +893,18 @@ function createPickupMesh(kind) {
 }
 
 const bursts = [];
+// Kills (the only thing that spawns a burst) are infrequent compared to
+// bullets/hits, so a full pool isn't worth the complexity here -- but the
+// geometry is identical every time (only per-instance scale/opacity ever
+// differ), so it's hoisted out to a single shared instance instead of
+// rebuilding an identical vertex buffer on every kill. The material stays
+// per-instance since opacity animates independently and multiple bursts
+// can be fading at once; disposeObject3D is intentionally NOT used here
+// because it would also dispose this shared geometry.
+const _burstGeometry = new THREE.SphereGeometry(1, 10, 10);
 function spawnBurst(x, z) {
-  const geo = new THREE.SphereGeometry(1, 10, 10);
   const mat = new THREE.MeshBasicMaterial({ color: 0xff7722, transparent: true, opacity: 0.9 });
-  const mesh = new THREE.Mesh(geo, mat);
+  const mesh = new THREE.Mesh(_burstGeometry, mat);
   mesh.position.set(x, 0.64, z);
   scene.add(mesh);
   bursts.push({ mesh, age: 0 });
@@ -757,6 +916,7 @@ function updateBursts(dt) {
     const t = b.age / 0.5;
     if (t >= 1) {
       scene.remove(b.mesh);
+      b.mesh.material.dispose(); // per-instance -- the shared geometry above must NOT be disposed
       bursts.splice(i, 1);
       continue;
     }
@@ -766,12 +926,20 @@ function updateBursts(dt) {
 }
 
 // ---------- Floating combat numbers (damage/heal) ----------
+// Pooled: every hit/heal event spawns one of these, which during sustained
+// combat can happen many times a second -- reusing hidden <div>s avoids a
+// createElement+appendChild/remove cycle per hit.
 const combatNumbers = [];
+const combatNumberPool = [];
 function spawnCombatNumber(x, z, text, kind) {
-  const el = document.createElement('div');
+  let el = combatNumberPool.pop();
+  if (!el) {
+    el = document.createElement('div');
+    document.body.appendChild(el);
+  }
   el.className = 'combatNumber ' + kind;
   el.textContent = text;
-  document.body.appendChild(el);
+  el.style.opacity = 1;
   combatNumbers.push({ el, x, z, age: 0 });
 }
 function updateCombatNumbers(dt) {
@@ -780,12 +948,13 @@ function updateCombatNumbers(dt) {
     n.age += dt;
     const t = n.age / 0.9;
     if (t >= 1) {
-      n.el.remove();
+      n.el.style.display = 'none';
+      combatNumberPool.push(n.el);
       combatNumbers.splice(i, 1);
       continue;
     }
     const worldY = 1.9 + t * 1.4; // float upward in world space
-    const screenPos = new THREE.Vector3(n.x, worldY, n.z).project(camera);
+    const screenPos = _scratchVec3.set(n.x, worldY, n.z).project(camera);
     if (screenPos.z > 1) {
       n.el.style.display = 'none';
       continue;
@@ -869,6 +1038,10 @@ function ensureEntity(id, color) {
     invulnExpiresAt: 0,
     weaponType: 'normal',
     weaponExpiresAt: 0,
+    slowActive: false,
+    shockedActive: false,
+    supportType: null,
+    supportExpiresAt: 0,
   };
   entities.set(id, e);
   return e;
@@ -878,23 +1051,34 @@ function removeEntity(id) {
   const e = entities.get(id);
   if (!e) return;
   scene.remove(e.mesh.tankGroup);
+  disposeObject3D(e.mesh.tankGroup);
   e.nameTagEl.remove();
   entities.delete(id);
 }
 
 function resetGameState() {
   for (const id of Array.from(entities.keys())) removeEntity(id);
-  for (const mesh of bulletMeshes.values()) scene.remove(mesh);
+  for (const mesh of bulletMeshes.values()) {
+    scene.remove(mesh);
+    disposeObject3D(mesh);
+  }
   bulletMeshes.clear();
   bulletRender.clear();
   latestBulletData = [];
   for (const entry of pickupMeshes.values()) {
     scene.remove(entry.group);
+    disposeObject3D(entry.group);
     entry.labelEl.remove();
   }
   pickupMeshes.clear();
   latestPickupData = [];
-  for (const n of combatNumbers) n.el.remove();
+  // Recycle rather than discard -- these divs are pool-managed (see
+  // spawnCombatNumber) so a session reset should return them, not orphan
+  // them outside the pool's bookkeeping.
+  for (const n of combatNumbers) {
+    n.el.style.display = 'none';
+    combatNumberPool.push(n.el);
+  }
   combatNumbers.length = 0;
   selfId = null;
   lockedTargetId = null;
@@ -1131,6 +1315,10 @@ function applySnapshot(snapshot, isInit) {
     e.invulnExpiresAt = p.invulnExpiresAt || 0;
     e.weaponType = p.weaponType || 'normal';
     e.weaponExpiresAt = p.weaponExpiresAt || 0;
+    e.slowActive = !!p.slowActive;
+    e.shockedActive = !!p.shockedActive;
+    e.supportType = p.supportType || null;
+    e.supportExpiresAt = p.supportExpiresAt || 0;
     if (isInit) {
       e.render.x = p.x;
       e.render.z = p.z;
@@ -1226,6 +1414,13 @@ socket.on('state', (msg) => {
         const healer = entities.get(ev.playerId);
         if (healer) spawnCombatNumber(healer.target.x, healer.target.z, '+' + ev.healAmount, 'heal');
       }
+      if (ev.supportType && ev.playerId === selfId) Sound.supportActivate();
+    } else if (ev.type === 'supportExpired') {
+      if (ev.playerId === selfId) Sound.supportExpire();
+    } else if (ev.type === 'explosion') {
+      spawnBurst(ev.x, ev.z);
+      const mult = distVolMult(ev.x, ev.z);
+      if (mult > 0.03) Sound.explosion(mult, false);
     }
   }
 
@@ -1270,8 +1465,9 @@ const camPitch = 0.3;
 let firing = false;
 let pointerLocked = false;
 let lmbDown = false;
-let rmbDown = false; // RMB held = other half of the LMB+RMB target-lock chord — no zoom/ADS tied to it
-let comboArmed = false; // true once the current LMB+RMB press has already triggered a lock attempt
+let rmbDown = false; // RMB held = ADS/zoom (see updateCamera); also half of the LMB+RMB lock chord
+let lmbDownAt = 0; // performance.now() timestamp of the current LMB press, for chord-timing checks
+let rmbDownAt = 0; // same, for RMB
 const joystickVec = { x: 0, y: 0 }; // x = strafe right, y = forward, both -1..1
 
 window.addEventListener('keydown', (e) => {
@@ -1303,8 +1499,8 @@ if (!isTouchDevice) {
       lmbDown = false;
       rmbDown = false;
       // Losing pointer lock does NOT clear an active target lock — the lock
-      // persists independent of button state (see updateComboLock) and is
-      // only released by the conditions in updateAimLock/tryToggleLock.
+      // persists independent of button state and is only released by the
+      // conditions in updateAimLock, or by a manual tryToggleLock.
     }
     // While the pointer is locked, ALL mouse events (per spec) are routed to
     // the locked element, so a real click on this button would never arrive —
@@ -1325,16 +1521,37 @@ if (!isTouchDevice) {
     // updateAimLock) — target lock is a soft assist layered on top each
     // frame, not a hard override, so the player can freely look elsewhere
     // (e.g. to pick a new target) without the mouse ever being frozen.
-    turretYaw -= e.movementX * MOUSE_SENSITIVITY;
+    // Slower/more precise while ADS-zoomed (RMB held), same as a real ADS.
+    const sens = MOUSE_SENSITIVITY * (rmbDown ? ADS_SENS_MULT : 1);
+    turretYaw -= e.movementX * sens;
   });
 
+  // LMB = shoot, RMB = ADS. The two are independent EXCEPT for the special
+  // case of a quick LMB+RMB chord (either order, within LOCK_COMBO_WINDOW_MS
+  // of each other), which is target-lock activation instead of a shot: it
+  // must never fire, so firing is forced off for that press. A slow/held
+  // overlap (e.g. ADS for a while, then a LMB shot much later) is NOT a
+  // chord — it's just ADS + a normal, independent shot — so only presses
+  // that land close together in time are treated as the lock gesture.
   canvas.addEventListener('mousedown', (e) => {
     if (!pointerLocked) return;
+    const now = performance.now();
     if (e.button === 0) {
-      firing = true;
       lmbDown = true;
+      lmbDownAt = now;
+      if (rmbDown && now - rmbDownAt <= LOCK_COMBO_WINDOW_MS) {
+        attemptTargetLock();
+        firing = false;
+      } else {
+        firing = true;
+      }
     } else if (e.button === 2) {
       rmbDown = true;
+      rmbDownAt = now;
+      if (lmbDown && now - lmbDownAt <= LOCK_COMBO_WINDOW_MS) {
+        attemptTargetLock();
+        firing = false; // cancel whatever LMB-alone had already started
+      }
     }
   });
   window.addEventListener('mouseup', (e) => {
@@ -1567,24 +1784,20 @@ function pickCrosshairTarget() {
   return best;
 }
 
-// LMB+RMB target-lock activation: a one-shot TOGGLE, not a hold. The chord
-// is detected as an edge — the frame both buttons first become simultaneously
-// down — so pressing them in either order fires exactly one acquisition
-// attempt, no matter how long the chord is then held. The lock this produces
-// does NOT depend on the buttons staying down: release both immediately and
-// the target stays locked (see updateAimLock, which is the only place a lock
-// is cleared, aside from manual unlock via tryToggleLock).
-// Pressing the chord again while a target is already locked re-picks under
-// the crosshair and, if a different valid enemy is found, switches the lock
-// to it; if nothing valid is under the crosshair, the current lock is left
+// LMB+RMB target-lock activation: called synchronously, once, from the
+// mousedown handler the instant the chord is recognized (see the timing
+// check there) — NOT polled every frame, so it only ever runs exactly once
+// per press. The lock it produces does not depend on the buttons staying
+// down: release both immediately and the target stays locked (see
+// updateAimLock, the only place a lock is cleared, aside from manual
+// unlock via tryToggleLock).
+// Calling this while a target is already locked re-picks under the
+// crosshair and, if a different valid enemy is found, switches the lock to
+// it; if nothing valid is under the crosshair, the current lock is left
 // untouched rather than being cleared.
-function updateComboLock() {
-  const comboDown = lmbDown && rmbDown;
-  if (comboDown && !comboArmed) {
-    const target = pickCrosshairTarget();
-    if (target !== null) lockedTargetId = target;
-  }
-  comboArmed = comboDown;
+function attemptTargetLock() {
+  const target = pickCrosshairTarget();
+  if (target !== null) lockedTargetId = target;
 }
 
 function updateAimLock(dt) {
@@ -1613,7 +1826,14 @@ function updateAimLock(dt) {
   turretYaw = angleLerpCapped(turretYaw, desired, LOCK_TURN_RATE * dt);
 }
 
+// Runs every frame, but the locked target only actually changes on a
+// discrete event (acquire/switch/release) -- cache it so the DOM (a
+// classList flip + a textContent write) is touched only on that frame,
+// not all 60 of them while a lock sits unchanged.
+let lastRenderedLockId = undefined;
 function updateLockUI() {
+  if (lockedTargetId === lastRenderedLockId) return;
+  lastRenderedLockId = lockedTargetId;
   if (lockedTargetId && entities.has(lockedTargetId)) {
     crosshairEl.classList.add('locked');
     lockLabelEl.classList.remove('hidden');
@@ -1684,6 +1904,10 @@ function sendInput() {
     moveRight: move.r,
     turretRot: turretYaw,
     firing,
+    // Echoed purely so the sentinel support weapon (server-side) can prefer
+    // this same target — see Game.js#_updateSupportWeapons. Never used by
+    // the server for aiming/movement/damage.
+    lockedTargetId,
   });
 }
 setInterval(sendInput, 50); // 20 Hz, matches server tick rate
@@ -1745,9 +1969,18 @@ function updateRemoteInterpolation() {
   }
 }
 
+// Shared scratch vector for the screen-space projections below
+// (updateEntityMeshes/updatePickups/updateCombatNumbers) — these all run
+// once per render frame, once per live object, and previously each did
+// `new THREE.Vector3(...)` per object per frame purely to throw it away a
+// line later. None of these call sites need the value to survive past its
+// own immediate use, so one reused vector removes that per-frame garbage
+// without changing any result.
+const _scratchVec3 = new THREE.Vector3();
+
 function updateEntityMeshes() {
   for (const [id, e] of entities) {
-    const { tankGroup, bodyPivot, turretPivot, shieldMesh, invulnMesh } = e.mesh;
+    const { tankGroup, bodyPivot, turretPivot, shieldMesh, invulnMesh, supportMesh, statusMesh } = e.mesh;
     tankGroup.position.set(e.render.x, 0, e.render.z);
     bodyPivot.rotation.y = e.render.bodyRot;
     turretPivot.rotation.y = e.render.turretRot;
@@ -1757,21 +1990,63 @@ function updateEntityMeshes() {
       const pulse = 1 + Math.sin(performance.now() / 120) * 0.06;
       invulnMesh.scale.setScalar(pulse);
     }
+
+    const supportVisible = !!e.supportType && e.alive;
+    supportMesh.visible = supportVisible;
+    if (supportVisible) {
+      if (e._supportMeshType !== e.supportType) {
+        e._supportMeshType = e.supportType;
+        const meta = SUPPORT_META[e.supportType];
+        if (meta) supportMesh.material.color.setHex(meta.color);
+      }
+      supportMesh.rotation.z = performance.now() / 800;
+    }
+
+    const statusVisible = (e.slowActive || e.shockedActive) && e.alive;
+    statusMesh.visible = statusVisible;
+    if (statusVisible) {
+      // Shocked (weapon disabled) reads as an urgent flicker; a plain slow
+      // (no shock) stays a calm, steady blue — same mesh, different color
+      // driven by which debuff is actually active, cached like above so the
+      // color isn't rewritten every single frame while unchanged.
+      const wantFlicker = e.shockedActive;
+      if (e._statusMeshFlicker !== wantFlicker) {
+        e._statusMeshFlicker = wantFlicker;
+        if (!wantFlicker) statusMesh.material.color.setHex(0x4da8ff);
+      }
+      if (wantFlicker) {
+        const flicker = Math.sin(performance.now() / 70) > 0 ? 0xff4d4d : 0xffffff;
+        statusMesh.material.color.setHex(flicker);
+      }
+    }
+
     tankGroup.visible = e.alive;
 
-    const screenPos = new THREE.Vector3(e.render.x, 1.7, e.render.z).project(camera);
+    const screenPos = _scratchVec3.set(e.render.x, 1.7, e.render.z).project(camera);
     const behindCamera = screenPos.z > 1;
     if (behindCamera || !e.alive) {
-      e.nameTagEl.style.display = 'none';
+      if (e._nameTagShown !== false) {
+        e._nameTagShown = false;
+        e.nameTagEl.style.display = 'none';
+      }
     } else {
-      e.nameTagEl.style.display = 'block';
+      if (e._nameTagShown !== true) {
+        e._nameTagShown = true;
+        e.nameTagEl.style.display = 'block';
+      }
       const sx = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
       const sy = (-screenPos.y * 0.5 + 0.5) * window.innerHeight;
       e.nameTagEl.style.left = sx + 'px';
       e.nameTagEl.style.top = sy + 'px';
+      // HP only changes on an actual hit/heal (far rarer than every render
+      // frame) — skip the style writes entirely when it hasn't moved, same
+      // pattern as updateHud below.
       const hpPct = Math.max(0, Math.min(100, (e.hp / e.maxHp) * 100));
-      e.hpFillEl.style.width = hpPct + '%';
-      e.hpFillEl.style.background = hpPct > 50 ? '#3ddc6c' : hpPct > 25 ? '#ffb020' : '#ff4d4d';
+      if (e._hpPct !== hpPct) {
+        e._hpPct = hpPct;
+        e.hpFillEl.style.width = hpPct + '%';
+        e.hpFillEl.style.background = hpPct > 50 ? '#3ddc6c' : hpPct > 25 ? '#ffb020' : '#ff4d4d';
+      }
     }
   }
 }
@@ -1802,6 +2077,7 @@ function syncBullets() {
   for (const [id, mesh] of bulletMeshes) {
     if (!seen.has(id)) {
       scene.remove(mesh);
+      disposeObject3D(mesh);
       bulletMeshes.delete(id);
       bulletRender.delete(id);
     }
@@ -1823,6 +2099,7 @@ function syncPickups() {
   for (const [id, entry] of pickupMeshes) {
     if (!seen.has(id)) {
       scene.remove(entry.group);
+      disposeObject3D(entry.group);
       entry.labelEl.remove();
       pickupMeshes.delete(id);
     }
@@ -1835,7 +2112,7 @@ function updatePickups(dt, tSec) {
     entry.core.rotation.y += dt * 1.6;
     entry.core.position.y = 1.1 + Math.sin(tSec * 2 + entry.x) * 0.15;
 
-    const screenPos = new THREE.Vector3(entry.x, 2.1, entry.z).project(camera);
+    const screenPos = _scratchVec3.set(entry.x, 2.1, entry.z).project(camera);
     if (screenPos.z > 1) {
       entry.labelEl.style.display = 'none';
       continue;
@@ -1846,13 +2123,14 @@ function updatePickups(dt, tSec) {
   }
 }
 
-// Camera zoom/ADS is intentionally not implemented here — the previous
-// RMB-driven FOV zoom was inaccurate and has been removed rather than wired
-// up to target-lock. Target lock must never change FOV/camera distance, so
-// camera.fov simply stays at its BASE_FOV init value. A proper zoom/ADS
-// system, if added later, should stay a fully separate control from
-// target-lock (see updateComboLock/updateAimLock).
-function updateCamera() {
+let adsT = 0; // eased 0..1, 0 = normal view, 1 = fully ADS-zoomed (RMB held)
+
+// RMB = ADS/zoom. Fully independent of target-lock — attemptTargetLock/
+// updateAimLock never touch FOV or camera distance, so locking a target
+// never triggers this. Kept deliberately modest (a moderate FOV drop plus
+// a slight lean-in distance, both eased) so the player still reads the
+// map/surroundings instead of tunneling in like binoculars.
+function updateCamera(dt) {
   const self = entities.get(selfId);
   if (!self) return;
   const yaw = self.render.turretRot;
@@ -1860,27 +2138,74 @@ function updateCamera() {
   const targetZ = self.render.z;
   const targetY = 0.64;
 
-  const camX = targetX - Math.sin(yaw) * CAM_DIST * Math.cos(camPitch);
-  const camZ = targetZ - Math.cos(yaw) * CAM_DIST * Math.cos(camPitch);
-  const camY = targetY + CAM_DIST * Math.sin(camPitch) + CAM_BASE_HEIGHT * camPitch;
+  const adsTarget = rmbDown ? 1 : 0;
+  adsT += (adsTarget - adsT) * Math.min(1, ADS_TRANSITION_SPEED * dt);
+  const camDist = CAM_DIST - CAM_DIST * (1 - ADS_CAM_DIST_MULT) * adsT;
+  const fov = BASE_FOV - (BASE_FOV - ADS_FOV) * adsT;
+
+  const camX = targetX - Math.sin(yaw) * camDist * Math.cos(camPitch);
+  const camZ = targetZ - Math.cos(yaw) * camDist * Math.cos(camPitch);
+  const camY = targetY + camDist * Math.sin(camPitch) + CAM_BASE_HEIGHT * camPitch;
 
   camera.position.set(camX, camY + 2, camZ);
   camera.lookAt(targetX, targetY + 0.48, targetZ);
+
+  if (Math.abs(camera.fov - fov) > 0.01) {
+    camera.fov = fov;
+    camera.updateProjectionMatrix();
+  }
 }
+
+// updateHud() runs every render frame (~60/sec), but almost everything it
+// shows only actually changes on a discrete game event (a hit, a pickup, a
+// weapon swap) — far less often than 60/sec. Each field below is guarded by
+// a cached "last written" value so the DOM is only touched when the value
+// actually moved, instead of unconditionally re-writing (and, for the buffs
+// list, re-parsing a whole innerHTML blob) every single frame regardless of
+// whether anything changed. reloadBar is the one deliberate exception: it's
+// a continuously-filling progress bar, so it must keep writing every frame
+// or the fill animation would freeze.
+let lastHudCurrency = null;
+let lastHudStageName = null;
+let lastHudEnemiesRemaining = null;
+let lastHudHpPct = null;
+let lastHudHpLabel = null;
+let lastHudWeaponType = null;
+let lastHudBuffsKey = null;
+let lastHudSupportType = null;
+let lastHudSupportTotalMs = 1; // captured on activation (server only sends expiresAt, not total duration)
+let lastHudAlive = null;
+let lastHudRespawnSec = null;
 
 function updateHud() {
   const self = entities.get(selfId);
-  hudCurrencyValueEl.textContent = profile.currency;
+  if (profile.currency !== lastHudCurrency) {
+    lastHudCurrency = profile.currency;
+    hudCurrencyValueEl.textContent = profile.currency;
+  }
 
   if (mode === 'campaign' && latestStageStatus) {
-    campaignStageNameEl.textContent = latestStageStatus.stageName;
-    campaignEnemiesEl.textContent = latestStageStatus.enemiesRemaining;
+    if (latestStageStatus.stageName !== lastHudStageName) {
+      lastHudStageName = latestStageStatus.stageName;
+      campaignStageNameEl.textContent = latestStageStatus.stageName;
+    }
+    if (latestStageStatus.enemiesRemaining !== lastHudEnemiesRemaining) {
+      lastHudEnemiesRemaining = latestStageStatus.enemiesRemaining;
+      campaignEnemiesEl.textContent = latestStageStatus.enemiesRemaining;
+    }
   }
 
   if (!self) return;
   const hpPct = Math.max(0, Math.min(100, (self.hp / self.maxHp) * 100));
-  healthBar.style.width = hpPct + '%';
-  healthLabel.textContent = `${Math.max(0, Math.round(self.hp))} / ${self.maxHp}`;
+  if (hpPct !== lastHudHpPct) {
+    lastHudHpPct = hpPct;
+    healthBar.style.width = hpPct + '%';
+  }
+  const hpLabel = `${Math.max(0, Math.round(self.hp))} / ${self.maxHp}`;
+  if (hpLabel !== lastHudHpLabel) {
+    lastHudHpLabel = hpLabel;
+    healthLabel.textContent = hpLabel;
+  }
 
   if (self.alive && hpPct > 0 && hpPct < 25) {
     const nowBeep = performance.now();
@@ -1890,46 +2215,130 @@ function updateHud() {
     }
   }
 
+  // Continuous fill animation -- intentionally NOT change-guarded.
   const sinceFire = Date.now() - lastFireTimeLocal;
   const reloadPct = Math.min(100, (sinceFire / fireCooldownLocal) * 100);
   reloadBar.style.width = reloadPct + '%';
 
-  const weaponMeta = WEAPON_META[self.weaponType] || WEAPON_META.normal;
-  weaponIconEl.textContent = weaponMeta.icon;
-  weaponLabelEl.textContent = weaponMeta.label;
+  if (self.weaponType !== lastHudWeaponType) {
+    lastHudWeaponType = self.weaponType;
+    const weaponMeta = WEAPON_META[self.weaponType] || WEAPON_META.normal;
+    weaponIconEl.textContent = weaponMeta.icon;
+    weaponLabelEl.textContent = weaponMeta.label;
+  }
 
+  // The buffsKey captures every bit of state the rendered HTML depends on
+  // (which buffs are active + their rounded remaining seconds) so the
+  // (comparatively expensive) innerHTML rebuild below only runs on the
+  // ~1/sec tick where a countdown digit actually changes, instead of 60x/sec.
+  let buffsKey = '';
   let buffsHtml = '';
   const nowMs = Date.now();
   for (const key of ['armor', 'speed', 'rapidfire', 'invuln']) {
     if (!self[key + 'Active']) continue;
     const meta = BUFF_META[key];
     const remainingS = Math.max(0, Math.ceil((self[key + 'ExpiresAt'] - nowMs) / 1000));
+    buffsKey += key + remainingS + '|';
     buffsHtml += `<div class="buffBadge buff-${key}">${meta.icon} ${remainingS}s</div>`;
   }
-  activeBuffsEl.innerHTML = buffsHtml;
+  if (buffsKey !== lastHudBuffsKey) {
+    lastHudBuffsKey = buffsKey;
+    activeBuffsEl.innerHTML = buffsHtml;
+  }
+
+  // Support-weapon panel: icon/label only change on activate/switch (change
+  // -guarded like the buffs above), but the bar/countdown need to animate
+  // continuously while active, same as reloadBar.
+  if (self.supportType !== lastHudSupportType) {
+    lastHudSupportType = self.supportType;
+    supportPanelEl.classList.toggle('hidden', !self.supportType);
+    if (self.supportType) {
+      const meta = SUPPORT_META[self.supportType];
+      if (meta) {
+        supportPanelIconEl.textContent = meta.icon;
+        supportPanelTypeEl.textContent = meta.label;
+      }
+      // Server only sends the expiry timestamp, not the total duration, so
+      // the total (needed for the bar's fill percentage) is captured once
+      // here, the moment activation is first observed.
+      lastHudSupportTotalMs = Math.max(1, self.supportExpiresAt - nowMs);
+    }
+  }
+  if (self.supportType) {
+    const remainingMs = Math.max(0, self.supportExpiresAt - nowMs);
+    supportPanelBarEl.style.width = Math.min(100, (remainingMs / lastHudSupportTotalMs) * 100) + '%';
+    supportPanelTimeEl.textContent = (remainingMs / 1000).toFixed(1) + 's';
+  }
 
   if (!self.alive) {
-    deathBanner.classList.remove('hidden');
+    if (lastHudAlive !== false) {
+      lastHudAlive = false;
+      deathBanner.classList.remove('hidden');
+    }
     const remaining = Math.max(0, RESPAWN_DELAY_MS - (performance.now() - localDeathStart));
-    respawnCountEl.textContent = Math.ceil(remaining / 1000);
-  } else {
+    const respawnSec = Math.ceil(remaining / 1000);
+    if (respawnSec !== lastHudRespawnSec) {
+      lastHudRespawnSec = respawnSec;
+      respawnCountEl.textContent = respawnSec;
+    }
+  } else if (lastHudAlive !== true) {
+    lastHudAlive = true;
     deathBanner.classList.add('hidden');
   }
 }
 
 // ---------- Minimap ----------
+// Player-centered, rotating radar: the player is always drawn fixed at the
+// minimap's center pointing straight up, and the world (obstacles, pickups,
+// other entities) rotates/scrolls around them instead. This is "Design A"
+// (map rotates, player icon fixed) rather than the previous fixed-map/
+// rotating-icon layout, because a forward-locked radar is far easier to
+// read in combat — "up" always means "where I'm facing," full stop.
+//
+// The rotation is driven ONLY by self.render.bodyRot — the exact same
+// authoritative horizontal value the main chase camera and turret use (see
+// updateCamera/updateLocalPrediction) — never raw mouse delta, never a
+// locked target's bearing, and never camera pitch/FOV/ADS state. Concretely:
+//   - ADS (updateCamera) only ever touches camera.fov/camera position; it
+//     never writes bodyRot, so holding RMB cannot move the minimap.
+//   - Target lock (updateAimLock) only ever writes turretYaw (which becomes
+//     bodyRot next frame) as part of normal aiming — the SAME rotation the
+//     player's own camera follows. The minimap therefore tracks the player's
+//     true facing exactly like the main camera does; it never independently
+//     turns toward the locked enemy.
+//   - camPitch (look up/down) is a separate constant never read here, so
+//     pitch cannot tilt the minimap.
 function updateMinimap() {
+  const self = entities.get(selfId);
   const size = minimapEl.width;
   const ctx = minimapCtx;
   ctx.clearRect(0, 0, size, size);
   ctx.fillStyle = 'rgba(8,12,18,0.55)';
   ctx.fillRect(0, 0, size, size);
 
-  const half = arenaHalfSize || 60;
-  const scale = size / (half * 2);
-  // World +z is "forward" at bodyRot 0 (see server/Game.js), so it maps to
-  // up on the minimap; world +x maps to right, matching the facing-arrow math below.
-  const toMap = (x, z) => ({ px: (x + half) * scale, py: (half - z) * scale });
+  if (!self) return;
+
+  const half = size / 2;
+  const scale = size / (MINIMAP_RANGE * 2);
+  const bodyRot = self.render.bodyRot; // horizontal-only — see the function comment above
+  // Unrotated world→map projection (world +z → up, +x → right); this
+  // convention is arbitrary (see server/Game.js's forward vector) but is
+  // applied consistently to every object below, including the compass.
+  const toMap = (x, z) => ({ px: x * scale, py: -z * scale });
+  const playerP = toMap(self.render.x, self.render.z);
+
+  // Counter-rotate (and re-center on the player) everything EXCEPT the
+  // player's own icon: translate so the player's unrotated map position
+  // lands at the origin, rotate by -bodyRot, then translate to the
+  // minimap's center. Drawing the player's own icon inside this same
+  // transform would also place it exactly at the center (its own offset
+  // from itself is zero either way) — it's kept separate purely so it can
+  // be drawn UNROTATED afterward; rotating it here too would double-rotate
+  // it and point it the wrong way (see the fixed icon below).
+  ctx.save();
+  ctx.translate(half, half);
+  ctx.rotate(-bodyRot);
+  ctx.translate(-playerP.px, -playerP.py);
 
   ctx.fillStyle = 'rgba(150,160,175,0.6)';
   for (const o of obstacles) {
@@ -1941,37 +2350,45 @@ function updateMinimap() {
     const meta = PICKUP_META[pk.kind];
     if (!meta) continue;
     const p = toMap(pk.x, pk.z);
-    ctx.fillStyle = '#' + meta.color.toString(16).padStart(6, '0');
+    ctx.fillStyle = meta.hex;
     ctx.beginPath();
     ctx.arc(p.px, p.py, 2.2, 0, Math.PI * 2);
     ctx.fill();
   }
 
   for (const [id, e] of entities) {
-    if (!e.alive) continue;
+    if (!e.alive || id === selfId) continue;
     const p = toMap(e.render.x, e.render.z);
-    if (id === selfId) {
-      // Arrow drawn pointing "up" (world +z, bodyRot 0), then rotated by
-      // bodyRot — ctx.rotate is clockwise, matching how forward swings from
-      // +z toward +x as bodyRot increases, same as the world-space math.
-      ctx.save();
-      ctx.translate(p.px, p.py);
-      ctx.rotate(e.render.bodyRot);
-      ctx.fillStyle = '#ffb020';
-      ctx.beginPath();
-      ctx.moveTo(0, -6);
-      ctx.lineTo(-4.2, 4.5);
-      ctx.lineTo(4.2, 4.5);
-      ctx.closePath();
-      ctx.fill();
-      ctx.restore();
-    } else {
-      ctx.fillStyle = e.isBot ? '#ff8a8a' : '#e8edf4';
-      ctx.beginPath();
-      ctx.arc(p.px, p.py, 3.2, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    ctx.fillStyle = e.isBot ? '#ff8a8a' : '#e8edf4';
+    ctx.beginPath();
+    ctx.arc(p.px, p.py, 3.2, 0, Math.PI * 2);
+    ctx.fill();
   }
+
+  ctx.restore();
+
+  // Compass "N" (world +z under the same convention as toMap above): swings
+  // around the rim as the player turns, staying consistent with the
+  // rotating world rather than a static letter.
+  const northAngle = -bodyRot;
+  const rimR = half - 9;
+  const nx = half + Math.sin(northAngle) * rimR;
+  const ny = half - Math.cos(northAngle) * rimR;
+  ctx.fillStyle = 'rgba(255,255,255,0.65)';
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('N', nx, ny);
+
+  // Player marker: fixed at the exact center, always pointing straight up —
+  // see the function comment for why this must stay unrotated.
+  ctx.fillStyle = '#ffb020';
+  ctx.beginPath();
+  ctx.moveTo(half, half - 6);
+  ctx.lineTo(half - 4.2, half + 4.5);
+  ctx.lineTo(half + 4.2, half + 4.5);
+  ctx.closePath();
+  ctx.fill();
 
   ctx.strokeStyle = 'rgba(255,255,255,0.25)';
   ctx.lineWidth = 1;
@@ -1996,7 +2413,6 @@ function animate() {
   lastTime = now;
 
   if (selfId) {
-    updateComboLock();
     updateAimLock(dt);
     updateLocalPrediction(dt);
     updateRemoteInterpolation();
@@ -2006,7 +2422,7 @@ function animate() {
     updatePickups(dt, now / 1000);
     updateBursts(dt);
     updateCombatNumbers(dt);
-    updateCamera();
+    updateCamera(dt);
     updateHud();
     updateLockUI();
     updateMinimap();

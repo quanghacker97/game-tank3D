@@ -127,6 +127,18 @@ io.on('connection', (socket) => {
     if (game) game.setInput(socket.id, input);
   });
 
+  // Pre-stage confirmation (section: "Enemies must not attack before player
+  // confirms") — the player's explicit "Confirm/Start Stage" click. Only
+  // meaningful for campaign rooms; Game.startCombat() is itself idempotent
+  // so a stray/duplicate emit (a malicious or buggy client re-sending it)
+  // can't re-trigger the combat-start side effects a second time.
+  socket.on('confirmStage', () => {
+    const roomId = socket.data.roomId;
+    if (!roomId || socket.data.mode !== 'campaign') return;
+    const game = RoomManager.getRoom(roomId);
+    if (game) game.startCombat();
+  });
+
   socket.on('leaveRoom', () => {
     cleanupSocketRoom(socket);
   });

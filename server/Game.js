@@ -43,6 +43,7 @@ const {
   BOSS_ENRAGE_COOLDOWN_MULT,
   BOSS_ENRAGE_SPEED_MULT,
   bossStatMult,
+  BOSS_MINION_CONFIG,
   WEAPON_TYPES,
   WEAPON_BUFF_DURATION_MS,
   SPLASH_FALLOFF_MIN,
@@ -447,6 +448,60 @@ class Game {
     this.huntTargetId = null;
     this.bossId = null;
     this._bossSpawned = false;
+
+    // ---- Pre-stage confirmation (section: "Enemies must not attack before
+    // player confirms") — campaign-only combat gate. Enemies/the boss still
+    // spawn and are visible on schedule (see _updateWaves, never gated by
+    // this), but their AI (movement/aiming/firing/attack telegraphs/minion
+    // calls — all reached only through _updateBotAI's per-tick dispatch)
+    // and ALL damage (see _applyDamage) stay frozen until startCombat() is
+    // called, exactly once, in response to the player's explicit confirm.
+    // Arena/team rooms have no such screen, so they start already active.
+    this.combatActive = mode !== 'campaign';
+    if (mode === 'campaign') {
+      console.log(`[Stage] Loading stage ${stageDef.chapter}.${stageDef.stageInChapter} (id ${stageDef.id}) | State = WAITING_FOR_CONFIRMATION`);
+      console.log('[Combat] Enemy attacks disabled | [Combat] Boss attacks disabled | [Combat] Player damage disabled');
+    }
+  }
+
+  // Called exactly once per stage, when the player presses the pre-stage
+  // Confirm button (see index.js's 'confirmStage' handler). Idempotent by
+  // design (a duplicate call is a no-op) since the client-side click guard
+  // is only a first line of defense, not the sole protection, per the
+  // "defensive safety layer" principle used throughout this codebase.
+  startCombat() {
+    if (this.combatActive) return;
+    console.log(`[Stage] Confirm pressed | roomId=${this.roomId}`);
+    console.log('[Combat] Enemy AI enabled | [Combat] Boss AI enabled | [Combat] Player damage enabled');
+    this.combatActive = true;
+    console.log('[Stage] State = COMBAT');
+    const now = Date.now();
+    // Re-baseline stageStartedAt to the ACTUAL combat-start moment — it
+    // feeds the 'survive' objective's countdown and the HUD's elapsed-time
+    // readout, neither of which should have been silently ticking away
+    // while the player was still reading the confirmation screen.
+    this.stageStartedAt = now;
+    // Re-stamp any bot/boss timer that was stamped as an ABSOLUTE
+    // Date.now()+delay at spawn time (which may have been well before this
+    // moment, e.g. a boss that spawned during a long pre-confirm read) —
+    // otherwise it could already be in the past the instant combat opens,
+    // causing an unfair instant ability/minion-call the moment the player
+    // confirms (section 9's "boss cooldown reaches 0 while modal is open").
+    // Regular per-tick cooldowns (fire cooldown, boss attack pool, elite
+    // ability "ready" timestamps) don't need this: they're only ever
+    // consulted from inside _updateBotAI/_updateBossAI, which never ran
+    // while frozen, so they're rolled fresh the first time combat runs.
+    for (const p of this.players.values()) {
+      if (!p.isBot) continue;
+      if (p.ai) {
+        const role = ENEMY_ROLES[p.role] || ENEMY_ROLES.normal;
+        p.ai.summonNextAt = now + (role.summonEveryMs || 8000);
+      }
+      if (p.isBoss && p.boss) {
+        p.boss.minions.nextSpawnAt = now + p.boss.minionCfg.firstSpawnDelayMs;
+      }
+    }
+    this.events.push({ type: 'combatStart' });
   }
 
   addPlayer(id, name, loadout, perks, team) {
@@ -504,7 +559,11 @@ class Game {
     opts = opts || {};
     const roleName = opts.role || 'normal';
     const id = opts.bossDef ? `boss-${this.roomId}` : `bot-${this.roomId}-${nextBotSeq++}`;
-    const spawn = randomSpawn();
+    // Boss-summoned minions land at a pre-validated arena spawn point (see
+    // _pickMinionSpawnPoints) rather than the usual random player-spawn pool.
+    const spawn = opts.spawnAt
+      ? { x: opts.spawnAt.x, z: opts.spawnAt.z, rotY: Math.atan2(-opts.spawnAt.x, -opts.spawnAt.z) }
+      : randomSpawn();
     const stats = statsFromBotTier(tierName, roleName, opts.chapter || this.chapter, opts.difficulty || this.difficulty);
     const tier = BOT_TIERS[tierName] || BOT_TIERS.easy;
     const role = ENEMY_ROLES[roleName] || ENEMY_ROLES.normal;
@@ -519,6 +578,10 @@ class Game {
       const mult = bossStatMult(opts.chapter || this.chapter);
       stats.maxHp = Math.round(stats.maxHp * mult.hpMult);
       stats.damage *= mult.dmgMult;
+      // Boss minion tanks (section: "Boss Minion Tank Spawn System") — one
+      // shared config (BOSS_MINION_CONFIG) plus an optional per-boss
+      // `minionOverride`, merged once here rather than every tick.
+      const minionCfg = Object.assign({}, BOSS_MINION_CONFIG, opts.bossDef.minionOverride || null);
       bossState = {
         def: opts.bossDef,
         phase: 0,
@@ -526,17 +589,25 @@ class Game {
         invulnUntil: 0,
         attack: { type: null, state: 'idle', startedAt: 0, readyAt: 0, data: null },
         attackCooldowns: {},
+        minionCfg,
+        minions: { state: 'idle', nextSpawnAt: Date.now() + minionCfg.firstSpawnDelayMs, telegraphReadyAt: 0, pendingPoints: null },
       };
     }
 
     const bot = {
       id,
-      name: opts.bossDef ? opts.bossDef.name : `${opts.isElite ? 'TINH NHUỆ — ' : ''}${role.label} (${tierLabel(tierName)})`,
+      name: opts.bossDef
+        ? opts.bossDef.name
+        : opts.isMinion
+        ? `Tăng Viện Trợ (${tierLabel(tierName)})`
+        : `${opts.isElite ? 'TINH NHUỆ — ' : ''}${role.label} (${tierLabel(tierName)})`,
       isBot: true,
       tierName,
       role: roleName,
       isElite: !!opts.isElite,
       isBoss: !!opts.bossDef,
+      isMinion: !!opts.isMinion,
+      summonedBy: opts.summonedBy || null,
       boss: bossState,
       elite: opts.isElite
         ? {
@@ -814,9 +885,16 @@ class Game {
     boss.input.turretRot = boss.turretRot + clamp(angleDiff(boss.turretRot, desiredAngle), -maxStep, maxStep);
     boss.input.firing = false; // bosses only ever damage through their special attack pool, never a plain shot
 
+    // Bug fix: BOSS_PHASE_THRESHOLDS is descending ([0.75, 0.5, 0.25]), so
+    // `findIndex` always returned the FIRST (largest) threshold satisfied —
+    // once hp dropped below 75%, every lower threshold was ALSO satisfied,
+    // but findIndex stops at the first match, pinning targetPhase at 1
+    // forever no matter how much further hp fell. A boss could therefore
+    // never actually reach phase 2 or 3 (or the phase-scaled behavior tied
+    // to them, e.g. minion call-in scaling below). Counting how many
+    // thresholds are currently satisfied gives the correct 0/1/2/3 phase.
     const hpPct = Math.max(0, boss.hp / boss.stats.maxHp);
-    const crossedIdx = BOSS_PHASE_THRESHOLDS.findIndex((t) => hpPct <= t);
-    const targetPhase = crossedIdx === -1 ? 0 : crossedIdx + 1;
+    const targetPhase = BOSS_PHASE_THRESHOLDS.filter((t) => hpPct <= t).length;
     if (targetPhase > state.phase) {
       state.phase = targetPhase;
       state.invulnUntil = now + BOSS_TRANSITION_INVULN_MS;
@@ -855,6 +933,92 @@ class Game {
     }
 
     this._updateBossAttack(boss, target, now);
+    this._updateBossMinionSpawns(boss, now);
+  }
+
+  // ---- Boss minion tank spawn system: a small, independent state machine
+  // (idle -> telegraph -> spawn -> idle) run alongside the attack state
+  // machine above — a boss can be mid-attack-cooldown and still be about to
+  // call in reinforcements, they're deliberately decoupled. Gated by the
+  // exact same phase-transition invulnerability early-return in
+  // _updateBossAI, so minion calls pause during a transition too.
+  _updateBossMinionSpawns(boss, now) {
+    const state = boss.boss;
+    const cfg = state.minionCfg;
+    const m = state.minions;
+
+    if (m.state === 'idle') {
+      if (now < m.nextSpawnAt) return;
+      const activeCount = this._countActiveMinions(boss.id);
+      if (activeCount >= cfg.maxActive) return; // section 3: wait for room rather than spawning over the cap
+      const phaseCfg = cfg.phases[Math.min(state.phase, cfg.phases.length - 1)];
+      const wantCount = phaseCfg.count + (state.enraged ? cfg.enrageExtraCount : 0);
+      const points = this._pickMinionSpawnPoints(Math.min(wantCount, cfg.maxActive - activeCount));
+      if (points.length === 0) {
+        // No currently-valid spawn point (section 8) — delay rather than
+        // forcing an invalid spawn; try again shortly instead of stalling
+        // until the next full cooldown.
+        m.nextSpawnAt = now + 2000;
+        return;
+      }
+      m.state = 'telegraph';
+      m.telegraphReadyAt = now + cfg.telegraphMs;
+      m.pendingPoints = points;
+      this.events.push({ type: 'bossMinionWarn', bossId: boss.id, points, telegraphMs: cfg.telegraphMs });
+    } else if (m.state === 'telegraph' && now >= m.telegraphReadyAt) {
+      for (const pt of m.pendingPoints) {
+        this.addBot(cfg.tier, {
+          role: 'normal',
+          chapter: this.chapter,
+          difficulty: this.difficulty,
+          isMinion: true,
+          summonedBy: boss.id,
+          spawnAt: pt,
+        });
+      }
+      this.events.push({ type: 'bossMinionSpawn', bossId: boss.id, points: m.pendingPoints });
+      const phaseCfg = cfg.phases[Math.min(state.phase, cfg.phases.length - 1)];
+      const cooldownMult = state.enraged ? cfg.enrageCooldownMult : 1;
+      m.nextSpawnAt = now + phaseCfg.cooldownMs * cooldownMult;
+      m.state = 'idle';
+      m.pendingPoints = null;
+    }
+  }
+
+  _countActiveMinions(bossId) {
+    let n = 0;
+    for (const p of this.players.values()) {
+      if (p.isMinion && p.alive && p.summonedBy === bossId) n++;
+    }
+    return n;
+  }
+
+  // Picks up to `count` DISTINCT, currently-valid spawn points for boss
+  // reinforcements — reuses the same edge-of-arena SPAWN_POINTS pool player
+  // spawns already trust to be clear of obstacles (section 8), then filters
+  // out anywhere too close to the human player so a tank never appears
+  // beside them. Returns fewer than `count` (down to zero) if not enough
+  // valid points exist right now rather than ever forcing an invalid one.
+  _pickMinionSpawnPoints(count) {
+    if (count <= 0) return [];
+    const target = this._primaryHuman();
+    const MIN_DIST_FROM_PLAYER = 24;
+    const candidates = SPAWN_POINTS.filter((p) => {
+      if (isBlockedByObstacle(p.x, p.z, TANK_RADIUS * 2)) return false;
+      if (target) {
+        const dx = p.x - target.x;
+        const dz = p.z - target.z;
+        if (dx * dx + dz * dz < MIN_DIST_FROM_PLAYER * MIN_DIST_FROM_PLAYER) return false;
+      }
+      return true;
+    });
+    // Fisher-Yates shuffle so repeated calls don't always favor the same
+    // corner, then take the front `count` (or however many are valid).
+    for (let i = candidates.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+    }
+    return candidates.slice(0, count).map((p) => ({ x: p.x, z: p.z }));
   }
 
   _updateBossAttack(boss, target, now) {
@@ -1250,6 +1414,14 @@ class Game {
   // damage that was applied (0 if fully blocked/absorbed) — read by the
   // vampire ammo's lifesteal, which must be based on REAL damage dealt.
   _applyDamage(bullet, target, rawDamage, now) {
+    // Pre-stage confirmation — final defensive safety layer (the preferred
+    // fix is that nothing capable of dealing damage runs at all while
+    // frozen; this is the catch-all backstop, same spirit as the boss
+    // invuln/buff checks right below). Blocks damage in BOTH directions —
+    // "no combat can happen before the player confirms", not just "the
+    // player can't be hurt" — silently, with no 'hit' event at all, since
+    // nothing should even appear to have happened pre-confirm.
+    if (!this.combatActive) return 0;
     // Boss phase-transition invulnerability (section 33) — visibly present,
     // completely untouchable, so a transition can never be an unfair hit.
     if (target.isBoss && target.boss && now < target.boss.invulnUntil) {
@@ -1994,7 +2166,12 @@ class Game {
     const now = Date.now();
 
     for (const player of this.players.values()) {
-      if (player.isBot && player.alive) this._updateBotAI(player, now, dt);
+      // Pre-stage confirmation gate: while frozen, a bot/boss simply never
+      // runs its AI at all this tick — no movement, no aiming, no firing
+      // (input.firing stays at its spawn-time false), no attack telegraphs,
+      // no minion calls (_updateBossMinionSpawns is only ever reached from
+      // inside _updateBossAI, itself only reached from here).
+      if (player.isBot && player.alive && this.combatActive) this._updateBotAI(player, now, dt);
 
       if (!player.alive) {
         if (!player.isBot && (this.mode === 'arena' || this.mode === 'team') && now - player.deathTime >= RESPAWN_DELAY_MS) {
@@ -2395,7 +2572,11 @@ class Game {
   // human losing all HP) is already handled earlier in tick() regardless
   // of objective type — this only covers the OTHER ways a stage ends.
   _updateObjective(now) {
-    if (this.mode !== 'campaign' || this.finished || !this.objective) return;
+    // Pre-stage confirmation gate: the 'defend' objective's siege-chip
+    // damage below mutates obj.hp directly (bypassing _applyDamage's own
+    // gate), and 'survive'/'boss'/'hunt'/'eliminate' completion shouldn't
+    // silently resolve while the player hasn't even started the stage yet.
+    if (this.mode !== 'campaign' || this.finished || !this.objective || !this.combatActive) return;
     const obj = this.objective;
 
     if (obj.type === 'defend' && obj.alive) {
@@ -2457,7 +2638,12 @@ class Game {
 
   getStageStatus() {
     if (this.mode !== 'campaign') return null;
-    const enemiesRemaining = Array.from(this.players.values()).filter((p) => p.isBot && p.alive && !p.isBoss).length;
+    // Boss-summoned minions (section: Boss Minion Tank Spawn System) are
+    // deliberately excluded here — they never gate stage/objective
+    // completion (only the boss itself does for a 'boss' objective), so
+    // counting them would make the HUD's "enemies remaining" number lie
+    // about what actually needs to be cleared to finish the stage.
+    const enemiesRemaining = Array.from(this.players.values()).filter((p) => p.isBot && p.alive && !p.isBoss && !p.isMinion).length;
     const boss = this.bossId ? this.players.get(this.bossId) : null;
     const rewardMult = (DIFFICULTIES[this.difficulty] || DIFFICULTIES.normal).rewardMult;
     return {
@@ -2472,6 +2658,7 @@ class Game {
       // sync; null once this is genuinely the last stage in the campaign.
       nextStageId: this.stageDef.id < STAGES.length ? this.stageDef.id + 1 : null,
       isLastStage: this.stageDef.id >= STAGES.length,
+      combatActive: this.combatActive,
       enemiesRemaining,
       finished: this.finished,
       cleared: this.stageCleared,
@@ -2548,6 +2735,7 @@ class Game {
         role: p.isBot ? p.role : null,
         isElite: !!p.isElite,
         isBoss: !!p.isBoss,
+        isMinion: !!p.isMinion,
         bossPhase: p.isBoss && p.boss ? p.boss.phase : 0,
         bossEnraged: p.isBoss && p.boss ? p.boss.enraged : false,
         bossInvuln: p.isBoss && p.boss ? now < p.boss.invulnUntil : false,

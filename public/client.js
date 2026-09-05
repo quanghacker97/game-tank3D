@@ -130,6 +130,10 @@ const DIFFICULTY_META = {
 };
 const DIFFICULTY_KEYS = Object.keys(DIFFICULTY_META);
 
+// Shared objective-type label map — used by both the stage-select grid and
+// the pre-stage confirmation screen (section: "Pre-Stage Confirmation").
+const OBJECTIVE_LABELS = { eliminate: 'Tiêu diệt', survive: 'Sống sót', defend: 'Phòng thủ', hunt: 'Truy lùng', boss: 'TRÙM' };
+
 // Visual/label metadata for weapons & pickups — must mirror the kinds server/
 // constants.js's WEAPON_TYPES / PICKUP_TYPES can produce. Damage/splash stay
 // server-authoritative; cooldownMult is duplicated here too (must match
@@ -471,6 +475,21 @@ const Sound = (() => {
     playTone({ freq: 700, type: 'square', duration: 0.06, gain: 0.14 });
   }
 
+  // Boss minion tank call-in (section: "Boss Minion Tank Spawn System") —
+  // a distinct mechanical "reinforcements incoming" cue for the telegraph,
+  // then a heavier landing thud for the actual spawn, both deliberately
+  // different in character from the red-alert bossTelegraphTick above so
+  // the player doesn't confuse "boss reinforcement call" with "dodge now".
+  function minionWarn() {
+    playTone({ freq: 340, endFreq: 420, type: 'square', duration: 0.18, gain: 0.22 });
+    playNoise({ duration: 0.15, gain: 0.15, filterFreq: 1200, filterType: 'bandpass' });
+  }
+
+  function minionSpawn() {
+    playNoise({ duration: 0.3, gain: 0.28, filterFreq: 300 });
+    playTone({ freq: 160, endFreq: 90, type: 'sawtooth', duration: 0.25, gain: 0.24 });
+  }
+
   // Continuous soft engine drone; volume/pitch rise with movement input.
   let engineOsc = null;
   let engineGain = null;
@@ -531,6 +550,8 @@ const Sound = (() => {
     bossPhase,
     bossEnrage,
     bossTelegraphTick,
+    minionWarn,
+    minionSpawn,
     updateEngine,
     stopEngine,
   };
@@ -682,6 +703,10 @@ const killfeedEl = document.getElementById('killfeed');
 const scoreboardEl = document.getElementById('scoreboard');
 const deathBanner = document.getElementById('deathBanner');
 const respawnCountEl = document.getElementById('respawnCount');
+const stageIntroOverlayEl = document.getElementById('stageIntroOverlay');
+const stageIntroTitleEl = document.getElementById('stageIntroTitle');
+const stageIntroSubEl = document.getElementById('stageIntroSub');
+const btnStageConfirmEl = document.getElementById('btnStageConfirm');
 const stageResultOverlayEl = document.getElementById('stageResultOverlay');
 const stageResultTitleEl = document.getElementById('stageResultTitle');
 const stageResultSubEl = document.getElementById('stageResultSub');
@@ -1419,6 +1444,52 @@ function updateBossTelegraphVisual() {
   bossTelegraphEl.style.top = (-screenPos.y * 0.5 + 0.5) * window.innerHeight - 40 + 'px';
 }
 
+// ---------- Boss minion tank spawn presentation ----------
+// A small, orange "reinforcements incoming" ring at each landing point,
+// visually distinct from the red circular attack telegraph above (this is
+// a warning about incoming ALLIES-to-the-boss, not incoming damage) —
+// several can be active at once (up to BOSS_MINION cap), so this is a real
+// pool rather than the attack telegraph's single reused instance.
+const minionWarnPool = [];
+const activeMinionWarns = []; // { mesh, startedAt, hideAt }
+function acquireMinionWarnMesh() {
+  const m = minionWarnPool.pop();
+  if (m) return m;
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffaa33, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(2.2, 2.9, 28), mat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.08;
+  scene.add(ring);
+  return ring;
+}
+function spawnMinionWarnMarkers(points, telegraphMs) {
+  const startedAt = performance.now();
+  for (const pt of points) {
+    const mesh = acquireMinionWarnMesh();
+    mesh.position.set(pt.x, 0.08, pt.z);
+    mesh.visible = true;
+    activeMinionWarns.push({ mesh, startedAt, hideAt: startedAt + telegraphMs });
+  }
+}
+function updateMinionWarnVisuals() {
+  if (activeMinionWarns.length === 0) return;
+  const now = performance.now();
+  for (let i = activeMinionWarns.length - 1; i >= 0; i--) {
+    const w = activeMinionWarns[i];
+    if (now >= w.hideAt) {
+      w.mesh.visible = false;
+      minionWarnPool.push(w.mesh);
+      activeMinionWarns.splice(i, 1);
+      continue;
+    }
+    const t = clamp((now - w.startedAt) / (w.hideAt - w.startedAt), 0, 1);
+    const pulse = 0.5 + Math.sin(now / 90) * 0.3 + t * 0.3;
+    w.mesh.material.opacity = Math.min(1, pulse);
+    const scale = 1 + t * 0.5;
+    w.mesh.scale.set(scale, scale, 1);
+  }
+}
+
 // ---------- Floating combat numbers (damage/heal) ----------
 // Pooled: every hit/heal event spawns one of these, which during sustained
 // combat can happen many times a second -- reusing hidden <div>s avoids a
@@ -1558,6 +1629,7 @@ function ensureEntity(id, color) {
     role: null,
     isElite: false,
     isBoss: false,
+    isMinion: false,
     bossPhase: 0,
     bossEnraged: false,
     bossInvuln: false,
@@ -1617,6 +1689,8 @@ function resetGameState() {
   lockedTargetId = null;
   stageResultShown = false;
   latestStageStatus = null;
+  stageIntroOverlayEl.classList.add('hidden');
+  stageIntroConfirmInFlight = false;
   stageResultOverlayEl.classList.add('hidden');
   perkPickSectionEl.classList.add('hidden');
   deathBanner.classList.add('hidden');
@@ -1714,7 +1788,7 @@ function renderStages() {
       const cleared = s.id < profile.unlockedStage;
       const card = document.createElement('div');
       card.className = 'stageCard' + (unlocked ? '' : ' locked') + (s.isBoss ? ' boss' : '') + (cleared ? ' cleared' : '');
-      const objLabel = { eliminate: 'Tiêu diệt', survive: 'Sống sót', defend: 'Phòng thủ', hunt: 'Truy lùng', boss: 'TRÙM' }[s.objective.type] || '';
+      const objLabel = OBJECTIVE_LABELS[s.objective.type] || '';
       card.innerHTML = `
         <div class="stageName">${s.stageInChapter}. ${s.isBoss ? '👑 ' + escapeHtml(s.bossName || 'Trùm') : objLabel}</div>
         <div class="stageMeta">${s.botCount} địch · +${s.reward} Xu</div>
@@ -1965,13 +2039,16 @@ function applySnapshot(snapshot, isInit) {
     e.role = p.role || null;
     e.isElite = !!p.isElite;
     e.isBoss = !!p.isBoss;
+    e.isMinion = !!p.isMinion;
     e.bossPhase = p.bossPhase || 0;
     e.bossEnraged = !!p.bossEnraged;
     e.bossInvuln = !!p.bossInvuln;
     const isTeammate = !!(selfTeam && e.team === selfTeam && p.id !== selfId);
     e.nameTagEl.className =
-      'nameTag' + (p.isBoss ? ' boss' : p.isElite ? ' elite' : p.isBot ? ' bot' : '') + (isTeammate ? ' teammate' : '');
-    const namePrefix = p.isBoss ? '👑 ' : p.isElite ? '⭐ ' : '';
+      'nameTag' +
+      (p.isBoss ? ' boss' : p.isElite ? ' elite' : p.isMinion ? ' minion' : p.isBot ? ' bot' : '') +
+      (isTeammate ? ' teammate' : '');
+    const namePrefix = p.isBoss ? '👑 ' : p.isElite ? '⭐ ' : p.isMinion ? '🔧 ' : '';
     e.nameLabel.textContent = namePrefix + p.name + (p.id === selfId ? ' (bạn)' : '');
     e.target.x = p.x;
     e.target.z = p.z;
@@ -2074,6 +2151,14 @@ socket.on('init', (data) => {
   // The new room's first snapshot has genuinely arrived -- only NOW is a
   // rejoin transition (see leaveAndRejoinCampaign) considered finished.
   stageTransitionInFlight = false;
+
+  // Pre-Stage Confirmation: every NEW stage load (first game start, a
+  // normal stage transition, a boss stage, or a chapter transition) re-joins
+  // via this exact 'init' event — one hook covers all four cases from
+  // section 10. Arena/team rooms have no such screen server-side
+  // (combatActive starts true there), so nothing is shown for them.
+  if (mode === 'campaign') showStageIntro(latestStageStatus);
+  else stageIntroOverlayEl.classList.add('hidden');
 });
 
 socket.on('playerJoined', (p) => {
@@ -2171,6 +2256,16 @@ socket.on('state', (msg) => {
       spawnBossTelegraph(ev);
     } else if (ev.type === 'bossLaserFire') {
       spawnLaserBeamVisual(ev);
+    } else if (ev.type === 'bossMinionWarn') {
+      spawnMinionWarnMarkers(ev.points, ev.telegraphMs);
+      addKillfeedEntry('📡 Trùm đang gọi viện binh...');
+      Sound.minionWarn();
+    } else if (ev.type === 'bossMinionSpawn') {
+      for (const pt of ev.points) spawnBurst(pt.x, pt.z);
+      Sound.minionSpawn();
+    } else if (ev.type === 'combatStart') {
+      console.log('[Combat] Enemy AI enabled | [Combat] Boss AI enabled | [Combat] Player damage enabled | [Stage] State = COMBAT');
+      addKillfeedEntry('⚔️ Trận chiến bắt đầu!');
     }
   }
 
@@ -2234,6 +2329,52 @@ function renderPerkPick() {
     perkPickCardsEl.appendChild(card);
   }
 }
+
+// Pre-Stage Confirmation (section: "Enemies must not attack before player
+// confirms") — one-shot guard mirroring stageTransitionInFlight's pattern:
+// disable-the-button-immediately PLUS a boolean in-flight guard, so button
+// spam/double-click/Enter-key-repeat can trigger the "confirmStage" emit at
+// most once per stage. showStageIntro() resets it fresh each time the modal
+// opens (same idiom showStageResult uses for its own three buttons below).
+let stageIntroConfirmInFlight = false;
+
+function showStageIntro(status) {
+  if (!status) {
+    stageIntroOverlayEl.classList.add('hidden');
+    return;
+  }
+  stageIntroConfirmInFlight = false;
+  btnStageConfirmEl.disabled = false;
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+
+  const meta = STAGES_META.find((s) => s.id === status.stageId) || null;
+  const objLabel = OBJECTIVE_LABELS[(status.objective && status.objective.type) || ''] || '';
+  stageIntroTitleEl.textContent = (meta && meta.isBoss ? '👑 ' : '') + status.stageName;
+  const lines = [
+    `Chương ${status.chapter}${meta && meta.theme ? ' — ' + escapeHtml(meta.theme.name) : ''}`,
+    `Mục tiêu: ${objLabel}`,
+    `Độ khó: ${(DIFFICULTY_META[profile.difficulty] || DIFFICULTY_META.normal).label}`,
+  ];
+  if (meta && meta.isBoss) lines.push(`👑 Trùm: ${escapeHtml(meta.bossName || 'Trùm')}`);
+  else if (meta) lines.push(`${meta.botCount} địch`);
+  stageIntroSubEl.innerHTML = lines.join('<br>');
+
+  stageIntroOverlayEl.classList.remove('hidden');
+  console.log('[Stage] Loading', status.stageName, '| State = WAITING_FOR_CONFIRMATION');
+}
+
+btnStageConfirmEl.addEventListener('click', () => {
+  // Section 8: the transition guard is checked AND the button disabled in
+  // the very first lines, before anything else runs, so a duplicate click
+  // arriving before the first one is even processed still can't get past
+  // this point.
+  if (stageIntroConfirmInFlight) return;
+  stageIntroConfirmInFlight = true;
+  btnStageConfirmEl.disabled = true;
+  stageIntroOverlayEl.classList.add('hidden');
+  console.log('[Stage] Confirm pressed | State = STARTING_STAGE');
+  socket.emit('confirmStage');
+});
 
 function showStageResult(status) {
   stageResultShown = true;
@@ -3512,8 +3653,8 @@ function updateMinimap() {
     // Elite/boss (sections 26-27) get a distinct gold/larger marker so a
     // HUNT objective's target — or an incoming boss — is findable at a
     // glance rather than blending into the normal red bot dots.
-    const radius = e.isBoss ? 5 : e.isElite ? 4 : 3.2;
-    ctx.fillStyle = e.isBoss ? '#ff3d3d' : e.isElite ? '#ffd166' : e.isBot ? '#ff8a8a' : '#e8edf4';
+    const radius = e.isBoss ? 5 : e.isElite ? 4 : e.isMinion ? 3.6 : 3.2;
+    ctx.fillStyle = e.isBoss ? '#ff3d3d' : e.isElite ? '#ffd166' : e.isMinion ? '#ffaa33' : e.isBot ? '#ff8a8a' : '#e8edf4';
     ctx.beginPath();
     ctx.arc(p.px, p.py, radius, 0, Math.PI * 2);
     ctx.fill();
@@ -3579,6 +3720,7 @@ function animate() {
     updateBursts(dt);
     updateLightningBolts(dt);
     updateBossTelegraphVisual();
+    updateMinionWarnVisuals();
     updateCombatNumbers(dt);
     updateCamera(dt);
     updateHud();

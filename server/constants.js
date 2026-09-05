@@ -384,6 +384,33 @@ function bossStatMult(chapter) {
   return { hpMult: 12 + chapter * 1.8, dmgMult: 1.3 + chapter * 0.09 };
 }
 
+// ---------------------------------------------------------------------
+// Boss minion tanks: the boss periodically calls in small reinforcement
+// tanks to pressure the player while they're focused on the boss fight —
+// ONE shared, data-driven config (same reusable-engine principle as
+// BOSS_ATTACKS above), with per-boss overrides via a BOSS_DEFS entry's
+// optional `minionOverride`. Deliberately never stronger than the boss
+// itself: `tier` is a plain BOT_TIERS entry that only ever gets the
+// ordinary chapter/difficulty scaling (see statsFromBotTier) — nothing
+// here ever applies bossStatMult.
+// ---------------------------------------------------------------------
+const BOSS_MINION_CONFIG = {
+  tier: 'medium',
+  telegraphMs: 1400, // "reinforcements incoming" warning before a tank actually lands
+  maxActive: 4, // hard cap on simultaneously-alive boss-summoned minions (never overwhelm the player)
+  firstSpawnDelayMs: 17000, // first call-in only once the player's had time to engage the boss alone
+  // Indexed by boss phase (0 = fight start..75%, 1 = 75%..50%, 2 = 50%..25%, 3 = below 25%) —
+  // count and cooldown both ramp up together as the fight progresses.
+  phases: [
+    { count: 1, cooldownMs: 27000 },
+    { count: 1, cooldownMs: 22000 },
+    { count: 2, cooldownMs: 19000 },
+    { count: 2, cooldownMs: 15000 },
+  ],
+  enrageExtraCount: 1, // one extra tank per call-in once the boss is enraged
+  enrageCooldownMult: 0.72, // and it calls them in faster, same spirit as BOSS_ENRAGE_COOLDOWN_MULT
+};
+
 const BOSS_DEFS = [
   { id: 'boss_ch1', chapter: 1, name: 'Chỉ Huy Đột Kích', color: 0xff5c3d, scale: 1.5, attacks: ['dash', 'bulletStorm'] },
   { id: 'boss_ch2', chapter: 2, name: 'Xe Tăng Cơ Giới', color: 0x8a8a8a, scale: 1.65, attacks: ['groundSlam', 'bulletStorm', 'missileBarrage'] },
@@ -402,6 +429,11 @@ const BOSS_DEFS = [
     scale: 2.2,
     isFinal: true,
     attacks: ['missileBarrage', 'laserBeam', 'groundSlam', 'summon', 'dash', 'bulletStorm', 'teleportStrike'],
+    // The final boss calls in reinforcements sooner and, once enraged, in
+    // greater numbers than every other chapter boss — concretely exercising
+    // BOSS_MINION_CONFIG's per-boss override rather than leaving it
+    // theoretical.
+    minionOverride: { firstSpawnDelayMs: 13000, enrageExtraCount: 2 },
   },
 ];
 
@@ -1052,6 +1084,7 @@ module.exports = {
   BOSS_ENRAGE_COOLDOWN_MULT,
   BOSS_ENRAGE_SPEED_MULT,
   bossStatMult,
+  BOSS_MINION_CONFIG,
   BOSS_DEFS,
   CHAPTER_THEMES,
   OBJECTIVE_TYPES,

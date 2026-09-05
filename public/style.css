@@ -717,6 +717,39 @@ button {
 }
 #deathSub { font-size: 14px; color: #cfd6e0; }
 
+#stageIntroOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.72);
+  pointer-events: auto;
+}
+#stageIntroBox {
+  text-align: center;
+  background: rgba(16, 24, 36, 0.96);
+  border: 1px solid rgba(94,180,255,0.35);
+  border-radius: 14px;
+  padding: 32px 46px;
+  max-width: 420px;
+}
+#stageIntroTitle { font-size: 26px; font-weight: 800; margin-bottom: 10px; color: #cfe6ff; }
+#stageIntroSub { font-size: 14px; color: #cfd6e0; margin-bottom: 14px; line-height: 1.7; }
+#stageIntroHint { font-size: 12px; color: #8fa3bd; margin-bottom: 22px; }
+#btnStageConfirm {
+  padding: 12px 30px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 800;
+  font-size: 15px;
+  letter-spacing: 1px;
+  background: linear-gradient(180deg, #4dd6ff, #1c8fd1);
+  color: #06202e;
+  cursor: pointer;
+}
+#btnStageConfirm:disabled { opacity: 0.5; cursor: default; filter: grayscale(0.4); }
+
 #stageResultOverlay {
   position: absolute;
   inset: 0;
@@ -789,6 +822,7 @@ button {
 }
 .nameTag.bot { color: #ff9a9a; }
 .nameTag.elite { color: #ffd166; font-weight: 800; }
+.nameTag.minion { color: #ffb347; font-weight: 700; }
 .nameTag.boss { color: #ff6b6b; font-weight: 800; font-size: 13px; }
 .nameTag.teammate { color: #7cc4ff; }
 .nameTagHp {

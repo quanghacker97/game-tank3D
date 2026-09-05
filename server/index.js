@@ -6,7 +6,7 @@ const { createServer } = require('http');
 const { Server } = require('socket.io');
 
 const RoomManager = require('./RoomManager');
-const { TICK_MS, ARENA_HALF_SIZE, OBSTACLES, STAGES } = require('./constants');
+const { TICK_MS, ARENA_HALF_SIZE, OBSTACLES, STAGES, DIFFICULTIES } = require('./constants');
 
 const PORT = process.env.PORT || 3000;
 
@@ -19,7 +19,20 @@ const io = new Server(httpServer, {
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.get('/api/stages', (req, res) => {
-  res.json(STAGES.map((s) => ({ id: s.id, name: s.name, botCount: s.bots.length, reward: s.reward })));
+  res.json(
+    STAGES.map((s) => ({
+      id: s.id,
+      chapter: s.chapter,
+      stageInChapter: s.stageInChapter,
+      name: s.name,
+      theme: s.theme,
+      objective: s.objective,
+      botCount: s.botCount,
+      isBoss: !!s.boss,
+      bossName: s.boss ? s.boss.name : null,
+      reward: s.reward,
+    }))
+  );
 });
 
 function cleanupSocketRoom(socket) {
@@ -47,17 +60,19 @@ io.on('connection', (socket) => {
 
     const name = data && typeof data.name === 'string' ? data.name : 'Tank';
     const loadout = (data && data.loadout) || {};
+    const perks = (data && data.perks) || {};
     const mode = data && data.mode === 'campaign' ? 'campaign' : 'arena';
 
     if (mode === 'campaign') {
       const stageNumber = Number(data && data.stage);
-      const created = RoomManager.createCampaignRoom(socket.id, stageNumber);
+      const difficultyKey = DIFFICULTIES[data && data.difficulty] ? data.difficulty : 'normal';
+      const created = RoomManager.createCampaignRoom(socket.id, stageNumber, difficultyKey);
       if (!created) {
         socket.emit('joinError', { message: 'Ải không hợp lệ.' });
         return;
       }
       const { roomId, game } = created;
-      game.addPlayer(socket.id, name, loadout);
+      game.addPlayer(socket.id, name, loadout, perks);
       socket.join(roomId);
       socket.data.roomId = roomId;
       socket.data.mode = 'campaign';
@@ -72,7 +87,7 @@ io.on('connection', (socket) => {
       });
     } else {
       const game = RoomManager.getArenaGame();
-      const player = game.addPlayer(socket.id, name, loadout);
+      const player = game.addPlayer(socket.id, name, loadout, perks);
       socket.join(RoomManager.ARENA_ROOM_ID);
       socket.data.roomId = RoomManager.ARENA_ROOM_ID;
       socket.data.mode = 'arena';

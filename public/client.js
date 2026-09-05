@@ -37,6 +37,99 @@ const UPGRADES = {
   rate: [550, 510, 470, 430, 390, 350],
 };
 const UPGRADE_COST = [50, 120, 220, 360, 550];
+
+// ---- Sprint / Stamina (sections 1-6) — mirrors server/constants.js so the
+// client's local-prediction movement (updateLocalPrediction) and the
+// stamina bar stay in lockstep with the authoritative simulation. ----
+const SPRINT_SPEED_MULT = 1.55;
+const MAX_STAMINA = 100;
+const STAMINA_DRAIN_PER_SEC = 26;
+const STAMINA_REGEN_PER_SEC = 20;
+const STAMINA_REGEN_DELAY_MS = 700;
+
+// ---- Expanded upgrade catalog (25 nodes / 6 categories) — mirrors
+// server/constants.js's UPGRADE_CATALOG byte-for-byte (same generator
+// functions) purely for GARAGE UI display (cost/level/unit text); the
+// server remains the sole authority on what a level actually grants. ----
+function bonusLevels(base, perLevel, maxLevel) {
+  const arr = [base];
+  for (let i = 1; i <= maxLevel; i++) arr.push(Math.round((base + perLevel * i) * 1000) / 1000);
+  return arr;
+}
+function costCurve(maxLevel, baseCost, growth) {
+  const arr = [];
+  let c = baseCost;
+  for (let i = 0; i < maxLevel; i++) {
+    arr.push(Math.round(c));
+    c *= growth;
+  }
+  return arr;
+}
+const UPGRADE_CATEGORIES = [
+  { id: 'offense', label: 'Tấn Công', icon: '⚔️' },
+  { id: 'defense', label: 'Phòng Thủ', icon: '🛡️' },
+  { id: 'mobility', label: 'Cơ Động', icon: '💨' },
+  { id: 'weapon', label: 'Vũ Khí', icon: '🔫' },
+  { id: 'special', label: 'Đặc Biệt', icon: '✨' },
+  { id: 'utility', label: 'Hỗ Trợ', icon: '🧰' },
+];
+const UPGRADE_CATALOG = [
+  { id: 'power', category: 'offense', icon: '⚔️', label: 'Sức Mạnh', unit: 'sát thương', mode: 'absolute', maxLevel: 5, costs: UPGRADE_COST, levels: UPGRADES.power },
+  { id: 'critChance', category: 'offense', icon: '🎯', label: 'Tỉ Lệ Chí Mạng', unit: '% chí mạng', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 80, 1.6), levels: bonusLevels(0, 0.03, 5), pct: true },
+  { id: 'critDamage', category: 'offense', icon: '💥', label: 'Sát Thương Chí Mạng', unit: 'x sát thương chí mạng', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 100, 1.6), levels: bonusLevels(1.5, 0.15, 5) },
+  { id: 'armorPen', category: 'offense', icon: '🗡️', label: 'Xuyên Giáp', unit: '% bỏ qua giáp địch', mode: 'bonus', maxLevel: 4, costs: costCurve(4, 90, 1.7), levels: bonusLevels(0, 0.15, 4), pct: true },
+  { id: 'elementalDamage', category: 'offense', icon: '🔥', label: 'Sát Thương Nguyên Tố', unit: 'x sát thương đạn đặc biệt', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 90, 1.6), levels: bonusLevels(1, 0.08, 5) },
+  { id: 'defense', category: 'defense', icon: '🛡️', label: 'Giáp Trụ', unit: 'máu tối đa', mode: 'absolute', maxLevel: 5, costs: UPGRADE_COST, levels: UPGRADES.defense },
+  { id: 'damageReduction', category: 'defense', icon: '🛡️', label: 'Giảm Sát Thương', unit: '% giảm sát thương nhận', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 100, 1.6), levels: bonusLevels(0, 0.03, 5), pct: true },
+  { id: 'healthRegen', category: 'defense', icon: '➕', label: 'Hồi Máu', unit: 'máu/giây', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 70, 1.6), levels: bonusLevels(0, 0.6, 5) },
+  { id: 'elementalResist', category: 'defense', icon: '❄️', label: 'Kháng Nguyên Tố', unit: '% giảm hiệu ứng khống chế nhận vào', mode: 'bonus', maxLevel: 4, costs: costCurve(4, 90, 1.7), levels: bonusLevels(0, 0.1, 4), pct: true },
+  { id: 'agility', category: 'mobility', icon: '💨', label: 'Nhanh Nhẹn', unit: 'm/s', mode: 'absolute', maxLevel: 5, costs: UPGRADE_COST, levels: UPGRADES.agilityMove },
+  { id: 'sprintSpeed', category: 'mobility', icon: '🏃', label: 'Tốc Độ Chạy Nước Rút', unit: '% tốc độ chạy nước rút', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 70, 1.5), levels: bonusLevels(0, 0.06, 5), pct: true },
+  { id: 'maxStamina', category: 'mobility', icon: '🔋', label: 'Thể Lực Tối Đa', unit: 'điểm thể lực', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 60, 1.5), levels: bonusLevels(0, 15, 5) },
+  { id: 'staminaRegen', category: 'mobility', icon: '♻️', label: 'Hồi Thể Lực', unit: 'điểm/giây', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 60, 1.5), levels: bonusLevels(0, 3, 5) },
+  { id: 'sprintEfficiency', category: 'mobility', icon: '🌀', label: 'Hiệu Suất Chạy', unit: '% giảm tiêu hao thể lực', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 70, 1.6), levels: bonusLevels(0, 0.08, 5), pct: true },
+  { id: 'rate', category: 'weapon', icon: '🔫', label: 'Tốc Độ Bắn', unit: 'phát/s', mode: 'absolute', maxLevel: 5, costs: UPGRADE_COST, levels: UPGRADES.rate },
+  { id: 'projectileSpeed', category: 'weapon', icon: '➡️', label: 'Tốc Độ Đạn', unit: 'x tốc độ đạn', mode: 'bonus', maxLevel: 4, costs: costCurve(4, 60, 1.5), levels: bonusLevels(1, 0.05, 4) },
+  { id: 'projectilePierce', category: 'weapon', icon: '🔱', label: 'Xuyên Mục Tiêu', unit: '+số mục tiêu xuyên qua', mode: 'bonus', maxLevel: 3, costs: costCurve(3, 150, 2.0), levels: bonusLevels(0, 1, 3) },
+  { id: 'explosionRadius', category: 'weapon', icon: '💣', label: 'Bán Kính Nổ', unit: 'x bán kính nổ', mode: 'bonus', maxLevel: 4, costs: costCurve(4, 80, 1.6), levels: bonusLevels(1, 0.1, 4) },
+  { id: 'statusDuration', category: 'weapon', icon: '⏱️', label: 'Thời Gian Hiệu Ứng', unit: 'x thời lượng hiệu ứng', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 80, 1.6), levels: bonusLevels(1, 0.1, 5) },
+  { id: 'onKillHeal', category: 'special', icon: '🩸', label: 'Hồi Máu Khi Hạ Địch', unit: '% máu tối đa/lần hạ', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 90, 1.6), levels: bonusLevels(0, 0.02, 5), pct: true },
+  { id: 'killStreakDamage', category: 'special', icon: '🔗', label: 'Sát Thương Chuỗi Giết', unit: '% sát thương/stack (tối đa 5)', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 100, 1.6), levels: bonusLevels(0, 0.02, 5), pct: true },
+  { id: 'lowHpDamageBonus', category: 'special', icon: '😤', label: 'Cuồng Nộ Máu Thấp', unit: '% sát thương khi máu <30%', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 90, 1.6), levels: bonusLevels(0, 0.06, 5), pct: true },
+  { id: 'lootLuck', category: 'special', icon: '🍀', label: 'May Mắn Chiến Lợi Phẩm', unit: 'x tỉ lệ rơi đồ hiếm', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 100, 1.7), levels: bonusLevels(1, 0.15, 5) },
+  { id: 'supportDuration', category: 'utility', icon: '⏳', label: 'Thời Lượng Hỗ Trợ', unit: 'x thời lượng vũ khí hỗ trợ', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 80, 1.6), levels: bonusLevels(1, 0.1, 5) },
+  { id: 'supportPower', category: 'utility', icon: '🚀', label: 'Sức Mạnh Hỗ Trợ', unit: 'x sát thương & tốc độ bắn hỗ trợ', mode: 'bonus', maxLevel: 5, costs: costCurve(5, 90, 1.6), levels: bonusLevels(1, 0.08, 5) },
+];
+
+// ---- Post-stage permanent perk picks (sections 15-17, 39) — mirrors
+// server/constants.js's PERK_POOL. Stack counts (not raw stat values) are
+// what's sent to the server, which clamps/looks them up itself. ----
+const PERK_POOL = [
+  { id: 'overcharge', label: 'QUÁ TẢI', icon: '⚔️', rarity: 'common', desc: '+4% sát thương vũ khí', maxStacks: 5 },
+  { id: 'reinforced', label: 'GIÁP GIA CỐ', icon: '🛡️', rarity: 'common', desc: '+6% máu tối đa', maxStacks: 5 },
+  { id: 'overdrive', label: 'TĂNG TỐC HỒI', icon: '⚡', rarity: 'uncommon', desc: '+15% hồi thể lực', maxStacks: 4 },
+  { id: 'swiftboots', label: 'GIÀY THẦN TỐC', icon: '👢', rarity: 'uncommon', desc: '+5% tốc độ di chuyển', maxStacks: 4 },
+  { id: 'vampiric', label: 'HÚT MÁU', icon: '🩸', rarity: 'rare', desc: '+2% hồi máu khi hạ địch', maxStacks: 3 },
+  { id: 'quickcharge', label: 'NẠP NHANH', icon: '🔃', rarity: 'rare', desc: '-6% thời gian hồi chiêu', maxStacks: 3 },
+  { id: 'juggernaut', label: 'BẤT KHUẤT', icon: '💪', rarity: 'epic', desc: '+5% giảm sát thương nhận vào', maxStacks: 2 },
+  { id: 'sharpshooter', label: 'THIỆN XẠ', icon: '🎯', rarity: 'epic', desc: '+8% tỉ lệ chí mạng', maxStacks: 2 },
+  { id: 'ascendant', label: 'SIÊU VIỆT', icon: '🌟', rarity: 'legendary', desc: '+20% sát thương & +20% thể lực tối đa', maxStacks: 1 },
+  { id: 'phoenix', label: 'PHƯỢNG HOÀNG', icon: '🔥', rarity: 'legendary', desc: '+20% máu tối đa & hồi 2 máu/giây', maxStacks: 1 },
+];
+// Same 5-tier weighting as PICKUP_RARITY_WEIGHT (section 16) — used to roll
+// the 3 post-stage perk choices so legendary ones stay rare to see.
+const PERK_RARITY_WEIGHT = { common: 100, uncommon: 42, rare: 16, epic: 6, legendary: 2 };
+
+// ---- Campaign difficulty (section 38) — mirrors server/constants.js's
+// DIFFICULTIES; only the label is needed client-side for the selector UI. ----
+const DIFFICULTY_META = {
+  normal: { label: 'Thường' },
+  hard: { label: 'Khó' },
+  veryhard: { label: 'Rất Khó' },
+  nightmare: { label: 'Ác Mộng' },
+};
+const DIFFICULTY_KEYS = Object.keys(DIFFICULTY_META);
+
 const UPGRADE_TRACKS = [
   { key: 'power', icon: '⚔️', label: 'Sức mạnh', fmt: (lv) => `${UPGRADES.power[lv]} sát thương` },
   { key: 'defense', icon: '🛡️', label: 'Phòng thủ', fmt: (lv) => `${UPGRADES.defense[lv]} máu` },
@@ -49,41 +142,62 @@ const UPGRADE_TRACKS = [
 // server-authoritative; cooldownMult is duplicated here too (must match
 // server exactly) purely so the local reload-bar prediction paces itself
 // correctly for whichever weapon is currently active.
+// `tag` is a short subtitle shown under the weapon badge (section 32's ammo
+// panel) so the player reads not just WHICH ammo but what it actually DOES —
+// never shown for 'normal' since it has no special effect.
 const WEAPON_META = {
   normal: { icon: '🔫', label: 'Pháo thường', cooldownMult: 1 },
   laser: { icon: '⚡', label: 'Tia laser', cooldownMult: 0.32 },
   sniper: { icon: '🔭', label: 'Đạn tỉa', cooldownMult: 2.6 },
   spread: { icon: '🎇', label: 'Đạn tỏa 3 viên', cooldownMult: 1.3 },
-  explosive: { icon: '💣', label: 'Đạn nổ', cooldownMult: 1.9 },
-  ap: { icon: '🛠️', label: 'Xuyên giáp', cooldownMult: 1.5 },
-  shock: { icon: '⚡', label: 'Đạn điện', cooldownMult: 1.5 },
-  missile: { icon: '🚀', label: 'Tên lửa tự dẫn', cooldownMult: 2.2 },
-  ricochet: { icon: '🔰', label: 'Đạn dội tường', cooldownMult: 1.4 },
-  cryo: { icon: '❄️', label: 'Đạn đóng băng', cooldownMult: 1.4 },
+  explosive: { icon: '💣', label: 'Đạn nổ', cooldownMult: 1.9, tag: 'NỔ + ĐẨY LÙI' },
+  ap: { icon: '🛠️', label: 'Xuyên giáp', cooldownMult: 1.5, tag: 'XUYÊN NHIỀU MỤC TIÊU' },
+  shock: { icon: '⚡', label: 'Đạn điện', cooldownMult: 1.5, tag: 'GIẬT + LAN ĐIỆN' },
+  missile: { icon: '🚀', label: 'Tên lửa tự dẫn', cooldownMult: 2.2, tag: 'TỰ DẪN MỤC TIÊU' },
+  ricochet: { icon: '🔰', label: 'Đạn dội tường', cooldownMult: 1.4, tag: 'DỘI TƯỜNG' },
+  cryo: { icon: '❄️', label: 'Đạn đóng băng', cooldownMult: 1.4, tag: 'ĐÓNG BĂNG DẦN' },
+  fire: { icon: '🔥', label: 'Đạn cháy', cooldownMult: 1.5, tag: 'HIỆU ỨNG ĐỐT CHÁY' },
+  corrosive: { icon: '☣️', label: 'Đạn ăn mòn', cooldownMult: 1.4, tag: 'GIẢM GIÁP MỤC TIÊU' },
+  vampire: { icon: '🩸', label: 'Đạn hút máu', cooldownMult: 1.6, tag: 'HÚT MÁU HỒI SINH LỰC' },
+  marking: { icon: '🎯', label: 'Đạn đánh dấu', cooldownMult: 1.5, tag: 'ĐÁNH DẤU CHO ĐỒNG ĐỘI' },
+  cluster: { icon: '💥', label: 'Đạn chùm', cooldownMult: 2.0, tag: 'NỔ THÀNH NHIỀU MẢNH' },
 };
 
+// `rarity` must mirror server/constants.js's PICKUP_TYPES so the pickup's
+// glow strength (see createPickupMesh) and the killfeed's rarity-colored
+// label (see RARITY_META) always match what actually dropped.
 const PICKUP_META = {
-  armor: { icon: '🛡️', label: 'Giáp', color: 0x4da8ff },
-  heal: { icon: '➕', label: 'Hồi máu', color: 0x3ddc6c },
-  speed: { icon: '💨', label: 'Tăng tốc', color: 0x2de6c8 },
-  rapidfire: { icon: '🔃', label: 'Bắn nhanh', color: 0xff5ec4 },
-  invuln: { icon: '⭐', label: 'Bất tử tạm thời', color: 0xb35cff },
-  weapon_laser: { icon: '⚡', label: 'Tia laser', color: 0x35e6ff },
-  weapon_sniper: { icon: '🔭', label: 'Đạn tỉa', color: 0xfff066 },
-  weapon_spread: { icon: '🎇', label: 'Đạn tỏa 3 viên', color: 0xff8a3d },
-  weapon_explosive: { icon: '💣', label: 'Đạn nổ', color: 0xff4d4d },
-  weapon_ap: { icon: '🛠️', label: 'Xuyên giáp', color: 0xd8d8d8 },
-  weapon_shock: { icon: '⚡', label: 'Đạn điện', color: 0x63d2ff },
-  weapon_missile: { icon: '🚀', label: 'Tên lửa tự dẫn', color: 0xff9a3d },
-  weapon_ricochet: { icon: '🔰', label: 'Đạn dội tường', color: 0xb6ff5c },
-  weapon_cryo: { icon: '❄️', label: 'Đạn đóng băng', color: 0x9fe8ff },
+  armor: { icon: '🛡️', label: 'Giáp', color: 0x4da8ff, rarity: 'common' },
+  heal: { icon: '➕', label: 'Hồi máu', color: 0x3ddc6c, rarity: 'common' },
+  speed: { icon: '💨', label: 'Tăng tốc', color: 0x2de6c8, rarity: 'common' },
+  rapidfire: { icon: '🔃', label: 'Bắn nhanh', color: 0xff5ec4, rarity: 'common' },
+  invuln: { icon: '⭐', label: 'Bất tử tạm thời', color: 0xb35cff, rarity: 'uncommon' },
+  ammo_refill: { icon: '📦', label: 'Hộp đạn', color: 0xe8edf4, rarity: 'common' },
+  weapon_laser: { icon: '⚡', label: 'Tia laser', color: 0x35e6ff, rarity: 'common' },
+  weapon_sniper: { icon: '🔭', label: 'Đạn tỉa', color: 0xfff066, rarity: 'common' },
+  weapon_spread: { icon: '🎇', label: 'Đạn tỏa 3 viên', color: 0xff8a3d, rarity: 'common' },
+  weapon_explosive: { icon: '💣', label: 'Đạn nổ', color: 0xff4d4d, rarity: 'uncommon' },
+  weapon_shock: { icon: '⚡', label: 'Đạn điện', color: 0x63d2ff, rarity: 'uncommon' },
+  weapon_cryo: { icon: '❄️', label: 'Đạn đóng băng', color: 0x9fe8ff, rarity: 'uncommon' },
+  weapon_fire: { icon: '🔥', label: 'Đạn cháy', color: 0xff6a1a, rarity: 'uncommon' },
+  weapon_corrosive: { icon: '☣️', label: 'Đạn ăn mòn', color: 0x8cff5c, rarity: 'uncommon' },
+  weapon_ap: { icon: '🛠️', label: 'Xuyên giáp', color: 0xd8d8d8, rarity: 'rare' },
+  weapon_missile: { icon: '🚀', label: 'Tên lửa tự dẫn', color: 0xff9a3d, rarity: 'rare' },
+  weapon_ricochet: { icon: '🔰', label: 'Đạn dội tường', color: 0xb6ff5c, rarity: 'rare' },
+  weapon_vampire: { icon: '🩸', label: 'Đạn hút máu', color: 0xff2d55, rarity: 'rare' },
+  weapon_cluster: { icon: '💥', label: 'Đạn chùm', color: 0xffa64d, rarity: 'rare' },
+  weapon_marking: { icon: '🎯', label: 'Đạn đánh dấu', color: 0xffe14d, rarity: 'epic' },
   // Support-weapon crates — visually larger/brighter markers (see
   // createPickupMesh) so they read as a special, rarer find on sight.
-  support_turret: { icon: '🗼', label: 'Auto Turret', color: 0xffb020, support: true },
-  support_drone: { icon: '🛸', label: 'Combat Drone', color: 0x4dd0ff, support: true },
-  support_missilepod: { icon: '🚀', label: 'Missile Pod', color: 0xff5c3d, support: true },
-  support_orbital: { icon: '🪐', label: 'Orbital Support', color: 0xb35cff, support: true },
-  support_sentinel: { icon: '👁️', label: 'Sentinel', color: 0xffe14d, support: true },
+  support_turret: { icon: '🗼', label: 'Auto Turret', color: 0xffb020, support: true, rarity: 'common' },
+  support_drone: { icon: '🛸', label: 'Combat Drone', color: 0x4dd0ff, support: true, rarity: 'uncommon' },
+  support_missilepod: { icon: '🚀', label: 'Missile Pod', color: 0xff5c3d, support: true, rarity: 'rare' },
+  support_lightning: { icon: '⛈️', label: 'Sét Lan Truyền', color: 0x7df9ff, support: true, rarity: 'rare' },
+  support_orbital: { icon: '🪐', label: 'Orbital Support', color: 0xb35cff, support: true, rarity: 'epic' },
+  support_shield: { icon: '🛡️', label: 'Khiên Năng Lượng', color: 0x4da8ff, support: true, rarity: 'epic' },
+  support_timeslow: { icon: '⏳', label: 'Trường Thời Gian', color: 0x8ec9ff, support: true, rarity: 'epic' },
+  support_sentinel: { icon: '👁️', label: 'Sentinel', color: 0xffe14d, support: true, rarity: 'legendary' },
+  support_gravity: { icon: '🕳️', label: 'Hố Đen Trọng Lực', color: 0x2a1a4d, support: true, rarity: 'legendary' },
 };
 
 // Small standalone table (label/icon only — duration/expiry always comes
@@ -95,7 +209,25 @@ const SUPPORT_META = {
   missilepod: { icon: '🚀', label: 'Missile Pod', color: 0xff5c3d },
   orbital: { icon: '🪐', label: 'Orbital Support', color: 0xb35cff },
   sentinel: { icon: '👁️', label: 'Sentinel', color: 0xffe14d },
+  shield: { icon: '🛡️', label: 'Khiên Năng Lượng', color: 0x4da8ff },
+  timeslow: { icon: '⏳', label: 'Trường Thời Gian', color: 0x8ec9ff },
+  lightning: { icon: '⛈️', label: 'Sét Lan Truyền', color: 0x7df9ff },
+  gravity: { icon: '🕳️', label: 'Hố Đen Trọng Lực', color: 0x2a1a4d },
 };
+
+// 5-tier rarity system (section 3) — must mirror server/constants.js's
+// PICKUP_RARITY_WEIGHT tiers. `glow` scales the pickup's ring opacity/pulse
+// speed and the spawn-in pop's flash strength; rarer pickups are meant to be
+// unmistakable at a glance without any particle system (section 26: no
+// expensive VFX).
+const RARITY_META = {
+  common: { color: '#9aa5b1', glow: 1 },
+  uncommon: { color: '#3ddc6c', glow: 1.2 },
+  rare: { color: '#4da8ff', glow: 1.5 },
+  epic: { color: '#b35cff', glow: 1.9 },
+  legendary: { color: '#ffb020', glow: 2.4 },
+};
+
 // Precompute each kind's CSS hex string once (used by the minimap every
 // frame per visible pickup) instead of re-running toString(16)+padStart on
 // the same constant color value on every single render.
@@ -126,12 +258,18 @@ const BULLET_VISUALS = {
   missile: { shape: 'bolt', length: 1.1, radius: 0.16, color: 0xff9a3d, emissive: 0xff6a00 },
   ricochet: { shape: 'sphere', size: 0.3, color: 0xb6ff5c, emissive: 0x8ef22c },
   cryo: { shape: 'sphere', size: 0.34, color: 0x9fe8ff, emissive: 0x6cd4ff },
+  fire: { shape: 'sphere', size: 0.36, color: 0xff6a1a, emissive: 0xff2200 },
+  corrosive: { shape: 'sphere', size: 0.32, color: 0x8cff5c, emissive: 0x4dbb1a },
+  vampire: { shape: 'bolt', length: 1.2, radius: 0.13, color: 0xff2d55, emissive: 0xc4001f },
+  marking: { shape: 'bolt', length: 1.0, radius: 0.1, color: 0xffe14d, emissive: 0xffc400 },
+  cluster: { shape: 'sphere', size: 0.4, color: 0xffa64d, emissive: 0xff6a00 },
+  cluster_frag: { shape: 'sphere', size: 0.2, color: 0xffa64d, emissive: 0xff6a00 },
   // Support-weapon projectiles all share one small, neutral bolt look — kept
   // simple since they're secondary/automatic fire, not the player's own shot.
   support_turret: { shape: 'sphere', size: 0.3, color: 0xffb020, emissive: 0xff8800 },
   support_drone: { shape: 'sphere', size: 0.26, color: 0x4dd0ff, emissive: 0x2196c9 },
   support_missilepod: { shape: 'bolt', length: 1.0, radius: 0.15, color: 0xff5c3d, emissive: 0xff3300 },
-  support_orbital: { shape: 'sphere', size: 0.24, color: 0xb35cff, emissive: 0x8a2be2 },
+  support_orbital: { shape: 'bolt', length: 1.8, radius: 0.08, color: 0xb35cff, emissive: 0xe6a8ff },
   support_sentinel: { shape: 'bolt', length: 1.4, radius: 0.17, color: 0xffe14d, emissive: 0xffc400 },
 };
 const BULLET_HEIGHT = 0.68;
@@ -243,6 +381,24 @@ const Sound = (() => {
       playTone({ freq: 340, endFreq: 90, type: 'sawtooth', duration: 0.16, gain: 0.3 * m });
       playNoise({ duration: 0.12, gain: 0.2 * m, filterFreq: 1000 });
     },
+    fire: (m) => {
+      playNoise({ duration: 0.14, gain: 0.24 * m, filterFreq: 2600, filterType: 'highpass' });
+      playTone({ freq: 500, endFreq: 150, type: 'sawtooth', duration: 0.12, gain: 0.22 * m });
+    },
+    corrosive: (m) => {
+      playTone({ freq: 380, endFreq: 140, type: 'sawtooth', duration: 0.14, gain: 0.24 * m });
+      playNoise({ duration: 0.1, gain: 0.16 * m, filterFreq: 3200, filterType: 'highpass' });
+    },
+    vampire: (m) => {
+      playTone({ freq: 320, endFreq: 700, type: 'sine', duration: 0.14, gain: 0.24 * m });
+    },
+    marking: (m) => {
+      playTone({ freq: 1200, endFreq: 1500, type: 'triangle', duration: 0.08, gain: 0.2 * m });
+    },
+    cluster: (m) => {
+      playTone({ freq: 300, endFreq: 80, type: 'square', duration: 0.14, gain: 0.28 * m });
+      playNoise({ duration: 0.1, gain: 0.18 * m, filterFreq: 1400 });
+    },
   };
 
   function shot(kind, mult = 1) {
@@ -291,6 +447,35 @@ const Sound = (() => {
 
   function supportExpire() {
     playTone({ freq: 500, endFreq: 180, type: 'triangle', duration: 0.28, gain: 0.2 });
+  }
+
+  function shieldBreak(mult = 1) {
+    playNoise({ duration: 0.3, gain: 0.35 * mult, filterFreq: 2000, filterType: 'bandpass' });
+    playTone({ freq: 900, endFreq: 200, type: 'sawtooth', duration: 0.25, gain: 0.28 * mult });
+  }
+
+  function lightningStrike(mult = 1) {
+    playNoise({ duration: 0.12, gain: 0.3 * mult, filterFreq: 3500, filterType: 'highpass' });
+    playTone({ freq: 1800, endFreq: 300, type: 'sawtooth', duration: 0.1, gain: 0.22 * mult });
+  }
+
+  function bossSpawn() {
+    [220, 165, 110].forEach((f, i) => playTone({ freq: f, type: 'sawtooth', duration: 0.4, gain: 0.3, delay: i * 0.15 }));
+    playNoise({ duration: 0.6, gain: 0.3, filterFreq: 400, delay: 0.1 });
+  }
+
+  function bossPhase() {
+    playTone({ freq: 500, endFreq: 900, type: 'triangle', duration: 0.3, gain: 0.28 });
+    playNoise({ duration: 0.25, gain: 0.22, filterFreq: 1800, filterType: 'bandpass' });
+  }
+
+  function bossEnrage() {
+    playTone({ freq: 140, endFreq: 260, type: 'sawtooth', duration: 0.45, gain: 0.32 });
+    playNoise({ duration: 0.35, gain: 0.26, filterFreq: 600 });
+  }
+
+  function bossTelegraphTick() {
+    playTone({ freq: 700, type: 'square', duration: 0.06, gain: 0.14 });
   }
 
   // Continuous soft engine drone; volume/pitch rise with movement input.
@@ -347,6 +532,12 @@ const Sound = (() => {
     stageFailed,
     supportActivate,
     supportExpire,
+    shieldBreak,
+    lightningStrike,
+    bossSpawn,
+    bossPhase,
+    bossEnrage,
+    bossTelegraphTick,
     updateEngine,
     stopEngine,
   };
@@ -366,32 +557,53 @@ function distVolMult(x, z, maxDist = 55) {
 // ---------- Profile / progression (localStorage) ----------
 const PROFILE_KEY = 'tank3d_profile_v1';
 
-function clampLevel(v) {
+function clampLevel(v, maxLevel = MAX_UPGRADE_LEVEL) {
   const n = Math.round(Number(v));
-  return Number.isFinite(n) ? Math.max(0, Math.min(MAX_UPGRADE_LEVEL, n)) : 0;
+  return Number.isFinite(n) ? Math.max(0, Math.min(maxLevel, n)) : 0;
 }
 
+function defaultUpgrades() {
+  const u = {};
+  for (const node of UPGRADE_CATALOG) u[node.id] = 0;
+  return u;
+}
+
+function defaultPerks() {
+  const p = {};
+  for (const perk of PERK_POOL) p[perk.id] = 0;
+  return p;
+}
+
+// Extends (never replaces) the existing save: an old profile with only the
+// 4 legacy upgrade keys loads fine here — every new UPGRADE_CATALOG node
+// and PERK_POOL perk simply defaults to 0 the same way a brand-new save
+// would, so nothing already-spent is lost or reinterpreted (section 36).
 function loadProfile() {
   try {
     const raw = localStorage.getItem(PROFILE_KEY);
     if (raw) {
       const p = JSON.parse(raw);
+      const upgrades = defaultUpgrades();
+      for (const node of UPGRADE_CATALOG) {
+        if (p.upgrades && p.upgrades[node.id] !== undefined) upgrades[node.id] = clampLevel(p.upgrades[node.id], node.maxLevel);
+      }
+      const perks = defaultPerks();
+      for (const perk of PERK_POOL) {
+        if (p.perks && p.perks[perk.id] !== undefined) perks[perk.id] = clampLevel(p.perks[perk.id], perk.maxStacks);
+      }
       return {
         name: typeof p.name === 'string' ? p.name.slice(0, 16) : '',
         currency: Number.isFinite(p.currency) ? Math.max(0, p.currency) : 0,
-        upgrades: {
-          power: clampLevel(p.upgrades && p.upgrades.power),
-          defense: clampLevel(p.upgrades && p.upgrades.defense),
-          agility: clampLevel(p.upgrades && p.upgrades.agility),
-          rate: clampLevel(p.upgrades && p.upgrades.rate),
-        },
+        upgrades,
+        perks,
+        difficulty: DIFFICULTY_KEYS.includes(p.difficulty) ? p.difficulty : 'normal',
         unlockedStage: Number.isFinite(p.unlockedStage) ? Math.max(1, p.unlockedStage) : 1,
       };
     }
   } catch (e) {
     /* ignore corrupt storage */
   }
-  return { name: '', currency: 0, upgrades: { power: 0, defense: 0, agility: 0, rate: 0 }, unlockedStage: 1 };
+  return { name: '', currency: 0, upgrades: defaultUpgrades(), perks: defaultPerks(), difficulty: 'normal', unlockedStage: 1 };
 }
 
 function saveProfile() {
@@ -430,15 +642,27 @@ const btnArenaEl = document.getElementById('btnArena');
 const btnCampaignEl = document.getElementById('btnCampaign');
 const btnGarageEl = document.getElementById('btnGarage');
 const stageGridEl = document.getElementById('stageGrid');
+const difficultyRowEl = document.getElementById('difficultyRow');
+const chapterListEl = document.getElementById('chapterList');
 const stagesBackEl = document.getElementById('stagesBack');
 const garageBackEl = document.getElementById('garageBack');
 const garageCurrencyEl = document.getElementById('garageCurrency');
 const upgradeListEl = document.getElementById('upgradeList');
+const upgradeCategoryTabsEl = document.getElementById('upgradeCategoryTabs');
 
 const hud = document.getElementById('hud');
 const campaignBarEl = document.getElementById('campaignBar');
 const campaignStageNameEl = document.getElementById('campaignStageName');
 const campaignEnemiesEl = document.getElementById('campaignEnemies');
+const objectiveRowEl = document.getElementById('objectiveRow');
+const objectiveLabelEl = document.getElementById('objectiveLabel');
+const objectiveBarWrapEl = document.getElementById('objectiveBarWrap');
+const objectiveBarEl = document.getElementById('objectiveBar');
+const bossHudEl = document.getElementById('bossHud');
+const bossHudNameEl = document.getElementById('bossHudName');
+const bossHudBarEl = document.getElementById('bossHudBar');
+const bossHudPhasePipsEl = document.getElementById('bossHudPhasePips');
+const bossTelegraphEl = document.getElementById('bossTelegraphEl');
 const hudCurrencyValueEl = document.getElementById('hudCurrencyValue');
 const menuLeaveBtnEl = document.getElementById('menuLeaveBtn');
 const muteBtnEl = document.getElementById('muteBtn');
@@ -446,9 +670,12 @@ const minimapEl = document.getElementById('minimap');
 const minimapCtx = minimapEl.getContext('2d');
 const healthBar = document.getElementById('healthBar');
 const healthLabel = document.getElementById('healthLabel');
+const staminaWrapEl = document.getElementById('staminaWrap');
+const staminaBarEl = document.getElementById('staminaBar');
 const reloadBar = document.getElementById('reloadBar');
 const weaponIconEl = document.getElementById('weaponIcon');
 const weaponLabelEl = document.getElementById('weaponLabel');
+const weaponTagEl = document.getElementById('weaponTag');
 const activeBuffsEl = document.getElementById('activeBuffs');
 const supportPanelEl = document.getElementById('supportPanel');
 const supportPanelIconEl = document.getElementById('supportPanelIcon');
@@ -464,6 +691,8 @@ const respawnCountEl = document.getElementById('respawnCount');
 const stageResultOverlayEl = document.getElementById('stageResultOverlay');
 const stageResultTitleEl = document.getElementById('stageResultTitle');
 const stageResultSubEl = document.getElementById('stageResultSub');
+const perkPickSectionEl = document.getElementById('perkPickSection');
+const perkPickCardsEl = document.getElementById('perkPickCards');
 const btnStageNextEl = document.getElementById('btnStageNext');
 const btnStageRetryEl = document.getElementById('btnStageRetry');
 const btnStageMenuEl = document.getElementById('btnStageMenu');
@@ -783,6 +1012,23 @@ function createTankMesh(color) {
   invulnMesh.visible = false;
   tankGroup.add(invulnMesh);
 
+  // Energy Shield support (section 21) — distinct from the `armor` buff's
+  // shieldMesh above (the two can be active at once): opacity/color react
+  // every frame to the remaining shieldHp% so it visibly "cracks" as it
+  // takes damage, driven straight off the server's shieldHp/shieldMaxHp
+  // snapshot fields (see updateEntityMeshes) — no extra client-side state.
+  const energyShieldMat = new THREE.MeshBasicMaterial({
+    color: 0x4da8ff,
+    transparent: true,
+    opacity: 0.35,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const energyShieldMesh = new THREE.Mesh(new THREE.SphereGeometry(2.95, 16, 12), energyShieldMat);
+  energyShieldMesh.position.y = 1.4;
+  energyShieldMesh.visible = false;
+  tankGroup.add(energyShieldMesh);
+
   // Active support-weapon indicator — one ring whose color is set per-frame
   // from SUPPORT_META (see updateEntityMeshes), so every support type reuses
   // this same mesh instead of needing five bespoke models.
@@ -819,7 +1065,7 @@ function createTankMesh(color) {
   tankGroup.scale.setScalar(TANK_VISUAL_SCALE);
   scene.add(tankGroup);
 
-  return { tankGroup, bodyPivot, turretPivot, shieldMesh, invulnMesh, supportMesh, statusMesh };
+  return { tankGroup, bodyPivot, turretPivot, shieldMesh, invulnMesh, energyShieldMesh, supportMesh, statusMesh };
 }
 
 // ---------- Bullet visuals ----------
@@ -845,17 +1091,20 @@ function createBulletMesh(kind) {
 
 function createPickupMesh(kind) {
   const meta = PICKUP_META[kind] || PICKUP_META.armor;
+  const rarityMeta = RARITY_META[meta.rarity] || RARITY_META.common;
   const group = new THREE.Group();
   // Support-weapon crates read as visually special/rarer on sight (section
   // 15): a larger, sharper-cut core with a brighter glow and a second outer
   // ring, instead of the plain single-ring look every ordinary buff/ammo
-  // pickup uses.
+  // pickup uses. Rarity (section 3) additionally scales glow strength for
+  // EVERY pickup — a legendary drop should be unmistakable even before
+  // reading its icon — without any per-pickup particle system (section 26).
   const isSupport = !!meta.support;
 
   const coreMat = new THREE.MeshStandardMaterial({
     color: meta.color,
     emissive: meta.color,
-    emissiveIntensity: isSupport ? 1.1 : 0.65,
+    emissiveIntensity: (isSupport ? 1.1 : 0.65) * rarityMeta.glow,
     roughness: 0.3,
     metalness: 0.4,
   });
@@ -867,7 +1116,7 @@ function createPickupMesh(kind) {
   const ringMat = new THREE.MeshBasicMaterial({
     color: meta.color,
     transparent: true,
-    opacity: 0.35,
+    opacity: Math.min(0.7, 0.35 * rarityMeta.glow),
     side: THREE.DoubleSide,
   });
   const ring = new THREE.Mesh(new THREE.RingGeometry(1.0, 1.3, 24), ringMat);
@@ -889,7 +1138,12 @@ function createPickupMesh(kind) {
   labelEl.textContent = meta.icon;
   document.body.appendChild(labelEl);
 
-  return { group, core, labelEl };
+  const rarityTagEl = document.createElement('div');
+  rarityTagEl.className = 'pickupRarityTag rarity-' + (meta.rarity || 'common');
+  rarityTagEl.style.color = rarityMeta.color;
+  document.body.appendChild(rarityTagEl);
+
+  return { group, core, labelEl, rarityTagEl, rarity: meta.rarity || 'common', spawnAge: 0 };
 }
 
 const bursts = [];
@@ -923,6 +1177,101 @@ function updateBursts(dt) {
     b.mesh.scale.setScalar(1 + t * 4);
     b.mesh.material.opacity = 0.9 * (1 - t);
   }
+}
+
+// ---------- Chain Lightning bolt visual ----------
+// Strikes are rare (one per support's own boltCooldownMs, only while that
+// support is active) compared to bullets/hits, same reasoning as `bursts`
+// above — a dedicated pool isn't worth the complexity, just dispose each
+// bolt's own small geometry/material when its flash finishes.
+const lightningBolts = [];
+const LIGHTNING_MAX_POINTS = 8;
+function spawnLightningBolt(points, color = 0x9fe8ff, life = 0.25) {
+  const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 });
+  const geo = new THREE.BufferGeometry();
+  const positions = new Float32Array(LIGHTNING_MAX_POINTS * 3);
+  const n = Math.min(points.length, LIGHTNING_MAX_POINTS);
+  for (let i = 0; i < n; i++) {
+    positions[i * 3] = points[i][0];
+    positions[i * 3 + 1] = 1.6;
+    positions[i * 3 + 2] = points[i][1];
+  }
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setDrawRange(0, n);
+  const line = new THREE.Line(geo, mat);
+  scene.add(line);
+  lightningBolts.push({ line, age: 0, life });
+}
+function updateLightningBolts(dt) {
+  for (let i = lightningBolts.length - 1; i >= 0; i--) {
+    const b = lightningBolts[i];
+    b.age += dt;
+    const t = b.age / b.life;
+    if (t >= 1) {
+      scene.remove(b.line);
+      b.line.geometry.dispose();
+      b.line.material.dispose();
+      lightningBolts.splice(i, 1);
+      continue;
+    }
+    b.line.material.opacity = 0.9 * (1 - t);
+  }
+}
+
+// Boss Orbital-style laser beam (section 30) — a bright, brief line from
+// the boss toward its aim direction, reusing the same lightweight
+// bolt/dispose machinery as Chain Lightning above (see BOSS_ATTACKS.laserBeam).
+function spawnLaserBeamVisual(ev) {
+  const endX = ev.x + ev.dirX * ev.range;
+  const endZ = ev.z + ev.dirZ * ev.range;
+  spawnLightningBolt(
+    [
+      [ev.x, ev.z],
+      [endX, endZ],
+    ],
+    0xff5c3d,
+    0.3
+  );
+}
+
+// Boss attack telegraph (section 31): a plain floating warning label
+// tracking the boss's live screen position for the duration of the
+// telegraph window — always shown BEFORE the attack can deal any damage.
+const BOSS_ATTACK_LABELS = {
+  missileBarrage: '⚠ MƯA TÊN LỬA!',
+  laserBeam: '⚠ LASER SẮP BẮN!',
+  groundSlam: '⚠ ĐẬP ĐẤT!',
+  summon: '⚠ TRIỆU HỒI!',
+  dash: '⚠ LAO THẲNG!',
+  bulletStorm: '⚠ BÃO ĐẠN!',
+  teleportStrike: '⚠ DỊCH CHUYỂN TẤN CÔNG!',
+};
+let bossTelegraphActive = null; // { bossId, hideAt }
+function spawnBossTelegraph(ev) {
+  bossTelegraphEl.textContent = BOSS_ATTACK_LABELS[ev.attack] || '⚠ CẢNH BÁO!';
+  Sound.bossTelegraphTick();
+  bossTelegraphActive = { bossId: ev.bossId, hideAt: performance.now() + ev.telegraphMs };
+}
+function updateBossTelegraphVisual() {
+  if (!bossTelegraphActive) return;
+  if (performance.now() >= bossTelegraphActive.hideAt) {
+    bossTelegraphActive = null;
+    bossTelegraphEl.classList.add('hidden');
+    return;
+  }
+  const e = entities.get(bossTelegraphActive.bossId);
+  if (!e) {
+    bossTelegraphEl.classList.add('hidden');
+    return;
+  }
+  const screenPos = _scratchVec3.set(e.render.x, 3.2, e.render.z).project(camera);
+  if (screenPos.z > 1) {
+    bossTelegraphEl.classList.add('hidden');
+    return;
+  }
+  bossTelegraphEl.classList.remove('hidden');
+  bossTelegraphEl.style.left = (screenPos.x * 0.5 + 0.5) * window.innerWidth + 'px';
+  bossTelegraphEl.style.top = (-screenPos.y * 0.5 + 0.5) * window.innerHeight - 40 + 'px';
 }
 
 // ---------- Floating combat numbers (damage/heal) ----------
@@ -982,6 +1331,9 @@ let latestBulletData = [];
 const pickupMeshes = new Map(); // id -> { group, core, labelEl }
 let latestPickupData = [];
 
+const zoneMeshes = new Map(); // id -> { group, disc, ring }
+let latestZoneData = [];
+
 let localDeathStart = 0;
 let lastLowHpBeep = 0;
 let lockedTargetId = null;
@@ -1016,10 +1368,15 @@ function ensureEntity(id, color) {
   nameTagEl.appendChild(hpOuter);
   document.body.appendChild(nameTagEl);
 
+  const statusIconRowEl = document.createElement('div');
+  statusIconRowEl.className = 'statusIconRow';
+  document.body.appendChild(statusIconRowEl);
+
   e = {
     mesh,
     nameTagEl,
     hpFillEl,
+    statusIconRowEl,
     nameLabel: nameTagEl.querySelector('span'),
     render: { x: 0, z: 0, bodyRot: 0, turretRot: 0 },
     target: { x: 0, z: 0, bodyRot: 0, turretRot: 0 },
@@ -1040,8 +1397,24 @@ function ensureEntity(id, color) {
     weaponExpiresAt: 0,
     slowActive: false,
     shockedActive: false,
+    freezeActive: false,
+    corrodedActive: false,
+    markedActive: false,
+    burnActive: false,
+    staggeredActive: false,
     supportType: null,
     supportExpiresAt: 0,
+    shieldHp: 0,
+    shieldMaxHp: 0,
+    stamina: 0,
+    maxStamina: 0,
+    sprinting: false,
+    role: null,
+    isElite: false,
+    isBoss: false,
+    bossPhase: 0,
+    bossEnraged: false,
+    bossInvuln: false,
   };
   entities.set(id, e);
   return e;
@@ -1053,6 +1426,7 @@ function removeEntity(id) {
   scene.remove(e.mesh.tankGroup);
   disposeObject3D(e.mesh.tankGroup);
   e.nameTagEl.remove();
+  e.statusIconRowEl.remove();
   entities.delete(id);
 }
 
@@ -1069,9 +1443,22 @@ function resetGameState() {
     scene.remove(entry.group);
     disposeObject3D(entry.group);
     entry.labelEl.remove();
+    entry.rarityTagEl.remove();
   }
   pickupMeshes.clear();
   latestPickupData = [];
+  for (const entry of zoneMeshes.values()) {
+    scene.remove(entry.group);
+    disposeObject3D(entry.group);
+  }
+  zoneMeshes.clear();
+  latestZoneData = [];
+  for (const b of lightningBolts) {
+    scene.remove(b.line);
+    b.line.geometry.dispose();
+    b.line.material.dispose();
+  }
+  lightningBolts.length = 0;
   // Recycle rather than discard -- these divs are pool-managed (see
   // spawnCombatNumber) so a session reset should return them, not orphan
   // them outside the pool's bookkeeping.
@@ -1121,54 +1508,127 @@ function refreshMenuTexts() {
   hudCurrencyValueEl.textContent = profile.currency;
 }
 
-function renderStages() {
-  stageGridEl.innerHTML = '';
-  for (const s of STAGES_META) {
-    const unlocked = s.id <= profile.unlockedStage;
-    const card = document.createElement('div');
-    card.className = 'stageCard' + (unlocked ? '' : ' locked');
-    card.innerHTML = `
-      <div class="stageName">${escapeHtml(s.name)}</div>
-      <div class="stageMeta">${s.botCount} kẻ địch · +${s.reward} Xu</div>
-      ${unlocked ? '' : '<div class="lockIcon">🔒</div>'}
-    `;
-    if (unlocked) card.addEventListener('click', () => startCampaign(s.id));
-    stageGridEl.appendChild(card);
+// ---------- Stage select: 10 chapters x 8 stages (section 37) ----------
+function renderDifficultyRow() {
+  difficultyRowEl.innerHTML = '';
+  for (const key of DIFFICULTY_KEYS) {
+    const btn = document.createElement('button');
+    btn.className = 'difficultyBtn' + (profile.difficulty === key ? ' active' : '');
+    btn.textContent = DIFFICULTY_META[key].label;
+    btn.addEventListener('click', () => {
+      profile.difficulty = key;
+      saveProfile();
+      renderDifficultyRow();
+    });
+    difficultyRowEl.appendChild(btn);
   }
 }
 
+function renderStages() {
+  renderDifficultyRow();
+  chapterListEl.innerHTML = '';
+  for (let chapter = 1; chapter <= 10; chapter++) {
+    const stages = STAGES_META.filter((s) => s.chapter === chapter);
+    if (stages.length === 0) continue;
+    const firstStageId = stages[0].id;
+    const chapterUnlocked = firstStageId <= profile.unlockedStage;
+    const totalClearedInChapter = stages.filter((s) => s.id < profile.unlockedStage).length;
+
+    const block = document.createElement('div');
+    block.className = 'chapterBlock' + (chapterUnlocked ? '' : ' locked');
+    const header = document.createElement('div');
+    header.className = 'chapterHeader';
+    header.innerHTML = `
+      <span class="chapterName">${chapterUnlocked ? '🔓' : '🔒'} Chương ${chapter} — ${escapeHtml(stages[0].theme ? stages[0].theme.name : '')}</span>
+      <span class="chapterMeta">${totalClearedInChapter}/${stages.length} hoàn thành</span>
+    `;
+    block.appendChild(header);
+
+    const grid = document.createElement('div');
+    grid.className = 'chapterStageGrid';
+    for (const s of stages) {
+      const unlocked = s.id <= profile.unlockedStage;
+      const cleared = s.id < profile.unlockedStage;
+      const card = document.createElement('div');
+      card.className = 'stageCard' + (unlocked ? '' : ' locked') + (s.isBoss ? ' boss' : '') + (cleared ? ' cleared' : '');
+      const objLabel = { eliminate: 'Tiêu diệt', survive: 'Sống sót', defend: 'Phòng thủ', hunt: 'Truy lùng', boss: 'TRÙM' }[s.objective.type] || '';
+      card.innerHTML = `
+        <div class="stageName">${s.stageInChapter}. ${s.isBoss ? '👑 ' + escapeHtml(s.bossName || 'Trùm') : objLabel}</div>
+        <div class="stageMeta">${s.botCount} địch · +${s.reward} Xu</div>
+        ${unlocked ? '' : '<div class="lockIcon">🔒</div>'}
+      `;
+      if (unlocked) card.addEventListener('click', () => startCampaign(s.id));
+      grid.appendChild(card);
+    }
+    block.appendChild(grid);
+    chapterListEl.appendChild(block);
+  }
+}
+
+// ---------- Garage: 25 upgrade nodes across 6 categories (sections 7-17) ----------
+let activeUpgradeCategory = 'offense';
+
+function renderUpgradeCategoryTabs() {
+  upgradeCategoryTabsEl.innerHTML = '';
+  for (const cat of UPGRADE_CATEGORIES) {
+    const btn = document.createElement('button');
+    btn.className = 'categoryTab' + (activeUpgradeCategory === cat.id ? ' active' : '');
+    btn.textContent = `${cat.icon} ${cat.label}`;
+    btn.addEventListener('click', () => {
+      activeUpgradeCategory = cat.id;
+      renderGarage();
+    });
+    upgradeCategoryTabsEl.appendChild(btn);
+  }
+}
+
+function formatUpgradeValue(node, lvl) {
+  const v = node.levels[lvl];
+  if (node.mode === 'absolute') {
+    if (node.id === 'rate') return `${(1000 / v).toFixed(2)} phát/s`;
+    if (node.id === 'agility') return `${v.toFixed(1)} ${node.unit}`;
+    return `${Math.round(v)} ${node.unit}`;
+  }
+  if (node.pct) return `+${Math.round(v * 100)}${node.unit}`;
+  return `${v.toFixed(2)} ${node.unit}`;
+}
+
 function renderGarage() {
+  renderUpgradeCategoryTabs();
   garageCurrencyEl.textContent = profile.currency;
   upgradeListEl.innerHTML = '';
-  for (const track of UPGRADE_TRACKS) {
-    const lvl = profile.upgrades[track.key];
-    const maxed = lvl >= MAX_UPGRADE_LEVEL;
-    const cost = maxed ? null : UPGRADE_COST[lvl];
+  const nodes = UPGRADE_CATALOG.filter((n) => n.category === activeUpgradeCategory);
+  for (const node of nodes) {
+    const lvl = profile.upgrades[node.id] || 0;
+    const maxed = lvl >= node.maxLevel;
+    const cost = maxed ? null : node.costs[lvl];
     let pips = '';
-    for (let i = 0; i < MAX_UPGRADE_LEVEL; i++) pips += i < lvl ? '●' : '<span class="empty">●</span>';
+    for (let i = 0; i < node.maxLevel; i++) pips += i < lvl ? '●' : '<span class="empty">●</span>';
 
     const row = document.createElement('div');
     row.className = 'upgradeRow';
     row.innerHTML = `
       <div class="upgradeInfo">
-        <div class="upgradeName">${track.icon} ${track.label} (Lv.${lvl}/${MAX_UPGRADE_LEVEL})</div>
-        <div class="upgradeValue">${track.fmt(lvl)}${maxed ? '' : ` → <span class="next">${track.fmt(lvl + 1)}</span>`}</div>
+        <div class="upgradeName">${node.icon} ${node.label} (Lv.${lvl}/${node.maxLevel})</div>
+        <div class="upgradeValue">${formatUpgradeValue(node, lvl)}${maxed ? '' : ` → <span class="next">${formatUpgradeValue(node, lvl + 1)}</span>`}</div>
         <div class="upgradePips">${pips}</div>
       </div>
       <button class="upgradeBtn" ${maxed || profile.currency < cost ? 'disabled' : ''}>${maxed ? 'Tối đa' : `Nâng cấp (${cost} Xu)`}</button>
     `;
-    row.querySelector('.upgradeBtn').addEventListener('click', () => tryUpgrade(track.key));
+    row.querySelector('.upgradeBtn').addEventListener('click', () => tryUpgrade(node.id));
     upgradeListEl.appendChild(row);
   }
 }
 
-function tryUpgrade(trackKey) {
-  const lvl = profile.upgrades[trackKey];
-  if (lvl >= MAX_UPGRADE_LEVEL) return;
-  const cost = UPGRADE_COST[lvl];
+function tryUpgrade(nodeId) {
+  const node = UPGRADE_CATALOG.find((n) => n.id === nodeId);
+  if (!node) return;
+  const lvl = profile.upgrades[nodeId] || 0;
+  if (lvl >= node.maxLevel) return;
+  const cost = node.costs[lvl];
   if (profile.currency < cost) return;
   profile.currency -= cost;
-  profile.upgrades[trackKey] = lvl + 1;
+  profile.upgrades[nodeId] = lvl + 1;
   saveProfile();
   renderGarage();
   refreshMenuTexts();
@@ -1182,7 +1642,9 @@ function joinGame(opts) {
     name: profile.name,
     mode: opts.mode,
     stage: opts.stage,
+    difficulty: profile.difficulty,
     loadout: profile.upgrades,
+    perks: profile.perks,
   });
 }
 
@@ -1294,8 +1756,15 @@ function applySnapshot(snapshot, isInit) {
     const e = ensureEntity(p.id, p.color);
     e.name = p.name;
     e.isBot = !!p.isBot;
-    e.nameTagEl.className = 'nameTag' + (p.isBot ? ' bot' : '');
-    e.nameLabel.textContent = p.name + (p.id === selfId ? ' (bạn)' : '');
+    e.role = p.role || null;
+    e.isElite = !!p.isElite;
+    e.isBoss = !!p.isBoss;
+    e.bossPhase = p.bossPhase || 0;
+    e.bossEnraged = !!p.bossEnraged;
+    e.bossInvuln = !!p.bossInvuln;
+    e.nameTagEl.className = 'nameTag' + (p.isBoss ? ' boss' : p.isElite ? ' elite' : p.isBot ? ' bot' : '');
+    const namePrefix = p.isBoss ? '👑 ' : p.isElite ? '⭐ ' : '';
+    e.nameLabel.textContent = namePrefix + p.name + (p.id === selfId ? ' (bạn)' : '');
     e.target.x = p.x;
     e.target.z = p.z;
     e.target.bodyRot = p.bodyRot;
@@ -1317,8 +1786,18 @@ function applySnapshot(snapshot, isInit) {
     e.weaponExpiresAt = p.weaponExpiresAt || 0;
     e.slowActive = !!p.slowActive;
     e.shockedActive = !!p.shockedActive;
+    e.freezeActive = !!p.freezeActive;
+    e.corrodedActive = !!p.corrodedActive;
+    e.markedActive = !!p.markedActive;
+    e.burnActive = !!p.burnActive;
+    e.staggeredActive = !!p.staggeredActive;
     e.supportType = p.supportType || null;
     e.supportExpiresAt = p.supportExpiresAt || 0;
+    e.shieldHp = p.shieldHp || 0;
+    e.shieldMaxHp = p.shieldMaxHp || 0;
+    e.stamina = p.stamina || 0;
+    e.maxStamina = p.maxStamina || 0;
+    e.sprinting = !!p.sprinting;
     if (isInit) {
       e.render.x = p.x;
       e.render.z = p.z;
@@ -1350,6 +1829,7 @@ socket.on('init', (data) => {
   latestStageStatus = data.stageStatus || null;
   latestBulletData = data.snapshot.bullets;
   latestPickupData = data.snapshot.pickups || [];
+  latestZoneData = data.snapshot.zones || [];
 
   if (!worldBuilt) {
     buildGround();
@@ -1379,6 +1859,7 @@ socket.on('state', (msg) => {
   applySnapshot(msg.snapshot, false);
   latestBulletData = msg.snapshot.bullets;
   latestPickupData = msg.snapshot.pickups || [];
+  latestZoneData = msg.snapshot.zones || [];
   latestStageStatus = msg.stageStatus || null;
 
   for (const ev of msg.events) {
@@ -1401,14 +1882,20 @@ socket.on('state', (msg) => {
       if (victim) spawnBurst(victim.target.x, victim.target.z);
       const killerLabel = ev.killerId === selfId ? 'Bạn' : escapeHtml(ev.killerName);
       const victimLabel = ev.victimId === selfId ? 'Bạn' : escapeHtml(ev.victimName);
-      addKillfeedEntry(`<span class="k">${killerLabel}</span> đã hạ <span class="v">${victimLabel}</span>`);
+      // Sentinel's execution shot (section 20) gets a distinct, more
+      // satisfying finishing-blow phrasing in the killfeed.
+      const verb = ev.executed ? 'đã <b>KẾT LIỄU</b>' : 'đã hạ';
+      addKillfeedEntry(`<span class="k">${killerLabel}</span> ${verb} <span class="v">${victimLabel}</span>`);
       const isSelfDeath = ev.victimId === selfId;
       const explMult = isSelfDeath ? 1 : victim ? distVolMult(victim.target.x, victim.target.z) : 0.3;
       Sound.explosion(Math.max(explMult, 0.15), isSelfDeath);
       if (isSelfDeath) localDeathStart = performance.now();
     } else if (ev.type === 'pickup') {
       const who = ev.playerId === selfId ? 'Bạn' : escapeHtml(ev.playerName);
-      addKillfeedEntry(`${who} nhặt được <span class="k">${escapeHtml(ev.itemLabel)}</span>`);
+      const rarityColor = (RARITY_META[ev.itemRarity] || RARITY_META.common).color;
+      addKillfeedEntry(
+        `${who} nhặt được <span class="k" style="color:${rarityColor}">${escapeHtml(ev.itemLabel)}</span>`
+      );
       if (ev.playerId === selfId) Sound.pickup();
       if (ev.healAmount > 0) {
         const healer = entities.get(ev.playerId);
@@ -1421,6 +1908,38 @@ socket.on('state', (msg) => {
       spawnBurst(ev.x, ev.z);
       const mult = distVolMult(ev.x, ev.z);
       if (mult > 0.03) Sound.explosion(mult, false);
+    } else if (ev.type === 'shieldBreak') {
+      const holder = entities.get(ev.playerId);
+      if (holder) {
+        spawnBurst(holder.target.x, holder.target.z);
+        const mult = ev.playerId === selfId ? 1 : distVolMult(holder.target.x, holder.target.z);
+        if (mult > 0.03) Sound.shieldBreak(mult);
+      }
+    } else if (ev.type === 'lifesteal' && ev.playerId === selfId) {
+      // Vampire ammo (section 12): a subtle heal-styled callout at the
+      // player's own tank is the honest equivalent of "a trail traveling
+      // back to the player" given this project's DOM/instance-based combat
+      // number pool has no concept of a moving projectile-like effect.
+      const self = entities.get(selfId);
+      if (self) spawnCombatNumber(self.target.x, self.target.z, '+' + ev.amount, 'heal');
+    } else if (ev.type === 'lightning') {
+      spawnLightningBolt(ev.points);
+      const [lx, lz] = ev.points[0];
+      const mult = distVolMult(lx, lz);
+      if (mult > 0.03) Sound.lightningStrike(mult);
+    } else if (ev.type === 'bossSpawn') {
+      addKillfeedEntry(`👑 <span class="v">${escapeHtml(ev.name)}</span> đã xuất hiện!`);
+      Sound.bossSpawn();
+    } else if (ev.type === 'bossPhase') {
+      addKillfeedEntry(`⚔️ ${escapeHtml(ev.name)} bước sang giai đoạn ${ev.phase + 1}!`);
+      Sound.bossPhase();
+    } else if (ev.type === 'bossEnrage') {
+      addKillfeedEntry(`🔥 ${escapeHtml(ev.name)} ĐANG NỔI ĐIÊN!`);
+      Sound.bossEnrage();
+    } else if (ev.type === 'bossTelegraph') {
+      spawnBossTelegraph(ev);
+    } else if (ev.type === 'bossLaserFire') {
+      spawnLaserBeamVisual(ev);
     }
   }
 
@@ -1470,9 +1989,16 @@ let lmbDownAt = 0; // performance.now() timestamp of the current LMB press, for 
 let rmbDownAt = 0; // same, for RMB
 const joystickVec = { x: 0, y: 0 }; // x = strafe right, y = forward, both -1..1
 
+// Sprint (sections 1-6): HOLD Shift. Read every frame in updateCamera/
+// updateLocalPrediction/sendInput — never toggled, so releasing Shift
+// always returns to normal speed the very next frame with no separate
+// "stop sprint" action needed.
+let sprintHeld = false;
+
 window.addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'Space') firing = true;
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') sprintHeld = true;
   if (e.code === 'Tab' && hud.classList.contains('active')) {
     e.preventDefault();
     tryToggleLock();
@@ -1481,6 +2007,7 @@ window.addEventListener('keydown', (e) => {
 window.addEventListener('keyup', (e) => {
   keys.delete(e.code);
   if (e.code === 'Space') firing = false;
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') sprintHeld = false;
 });
 
 if (!isTouchDevice) {
@@ -1521,8 +2048,10 @@ if (!isTouchDevice) {
     // updateAimLock) — target lock is a soft assist layered on top each
     // frame, not a hard override, so the player can freely look elsewhere
     // (e.g. to pick a new target) without the mouse ever being frozen.
-    // Slower/more precise while ADS-zoomed (RMB held), same as a real ADS.
-    const sens = MOUSE_SENSITIVITY * (rmbDown ? ADS_SENS_MULT : 1);
+    // Slower/more precise while ADS-zoomed (RMB held) — but sprint disables
+    // ADS outright (section 5), so sensitivity stays normal while sprinting
+    // even if RMB happens to still be held.
+    const sens = MOUSE_SENSITIVITY * (rmbDown && !sprintHeld ? ADS_SENS_MULT : 1);
     turretYaw -= e.movementX * sens;
   });
 
@@ -1815,6 +2344,11 @@ function updateAimLock(dt) {
     lockedTargetId = null;
     return;
   }
+  // Sprint (section 6): the lock stays valid (checks above still ran), but
+  // sprinting must NOT rotate the camera/turret toward it — only the
+  // assist-nudge below is skipped.
+  if (sprintHeld) return;
+
   // Soft assist, not a hard override: this nudges turretYaw toward the
   // target at a capped rate every frame, on top of whatever the mouse/touch
   // handlers already applied this frame. A deliberate manual turn (e.g. to
@@ -1868,6 +2402,14 @@ let fireCooldownLocal = 550;
 let lastTime = performance.now();
 let lastMoveMag = 0;
 
+// Looks up a single node's bonus value at the player's current garage
+// level — used for the few upgrade effects local prediction needs to
+// mirror (sprint speed); everything else stays server-authoritative only.
+function upgradeBonusLevel(nodeId) {
+  const node = UPGRADE_CATALOG.find((n) => n.id === nodeId);
+  return node ? node.levels[profile.upgrades[nodeId] || 0] : 0;
+}
+
 function currentLoadoutStats() {
   const u = profile.upgrades;
   const self = entities.get(selfId);
@@ -1904,6 +2446,10 @@ function sendInput() {
     moveRight: move.r,
     turretRot: turretYaw,
     firing,
+    // Sprint (sections 1-6): the server is the sole authority on whether
+    // this actually grants extra speed (gated on real stamina) — holding
+    // Shift with no stamina left simply does nothing there.
+    sprinting: sprintHeld,
     // Echoed purely so the sentinel support weapon (server-side) can prefer
     // this same target — see Game.js#_updateSupportWeapons. Never used by
     // the server for aiming/movement/damage.
@@ -1931,6 +2477,13 @@ function updateLocalPrediction(dt) {
   const moveRight = move.r;
   lastMoveMag = Math.hypot(moveForward, moveRight);
 
+  // Sprint local prediction (sections 1-6): mirrors the server's own gate
+  // (must be moving, must have stamina, never while frozen) closely enough
+  // that the snapshot correction below stays tiny/imperceptible.
+  const isMoving = moveForward !== 0 || moveRight !== 0;
+  const sprintActive = sprintHeld && isMoving && self.stamina > 0 && !self.freezeActive;
+  const sprintMult = sprintActive ? SPRINT_SPEED_MULT * (1 + upgradeBonusLevel('sprintSpeed')) : 1;
+
   let x = self.render.x;
   let z = self.render.z;
   if (moveForward !== 0 || moveRight !== 0) {
@@ -1939,8 +2492,8 @@ function updateLocalPrediction(dt) {
     // -PI/2 to match server/Game.js — see comment there.
     const rx = Math.sin(bodyRot - Math.PI / 2);
     const rz = Math.cos(bodyRot - Math.PI / 2);
-    const dx = (fx * moveForward + rx * moveRight) * stats.moveSpeed * dt;
-    const dz = (fz * moveForward + rz * moveRight) * stats.moveSpeed * dt;
+    const dx = (fx * moveForward + rx * moveRight) * stats.moveSpeed * sprintMult * dt;
+    const dz = (fz * moveForward + rz * moveRight) * stats.moveSpeed * sprintMult * dt;
     const nx = clamp(x + dx, -arenaHalfSize + TANK_RADIUS, arenaHalfSize - TANK_RADIUS);
     if (!isBlockedByObstacle(nx, z, TANK_RADIUS)) x = nx;
     const nz = clamp(z + dz, -arenaHalfSize + TANK_RADIUS, arenaHalfSize - TANK_RADIUS);
@@ -1978,9 +2531,25 @@ function updateRemoteInterpolation() {
 // without changing any result.
 const _scratchVec3 = new THREE.Vector3();
 
+// Debuff icon glyphs for the compact per-entity status row (section 33) —
+// only the ones currently active are shown, most-urgent first.
+function buildStatusIconsKey(e) {
+  let key = '';
+  if (e.staggeredActive) key += 'g';
+  if (e.freezeActive) key += 'f';
+  else if (e.slowActive) key += 's';
+  if (e.shockedActive) key += 'e';
+  if (e.burnActive) key += 'b';
+  if (e.corrodedActive) key += 'c';
+  if (e.markedActive) key += 'm';
+  return key;
+}
+const STATUS_ICON_GLYPH = { g: '💢', f: '❄️', s: '🐌', e: '⚡', b: '🔥', c: '☣️', m: '🎯' };
+
 function updateEntityMeshes() {
   for (const [id, e] of entities) {
-    const { tankGroup, bodyPivot, turretPivot, shieldMesh, invulnMesh, supportMesh, statusMesh } = e.mesh;
+    const { tankGroup, bodyPivot, turretPivot, shieldMesh, invulnMesh, energyShieldMesh, supportMesh, statusMesh } =
+      e.mesh;
     tankGroup.position.set(e.render.x, 0, e.render.z);
     bodyPivot.rotation.y = e.render.bodyRot;
     turretPivot.rotation.y = e.render.turretRot;
@@ -1989,6 +2558,21 @@ function updateEntityMeshes() {
     if (invulnMesh.visible) {
       const pulse = 1 + Math.sin(performance.now() / 120) * 0.06;
       invulnMesh.scale.setScalar(pulse);
+    }
+
+    // Energy Shield support (section 21): opacity + a color shift toward
+    // red telegraph the remaining shieldHp% "cracking" as it takes damage.
+    const shieldSupportVisible = e.supportType === 'shield' && e.alive;
+    energyShieldMesh.visible = shieldSupportVisible;
+    if (shieldSupportVisible) {
+      const pct = e.shieldMaxHp > 0 ? e.shieldHp / e.shieldMaxHp : 0;
+      energyShieldMesh.material.opacity = 0.15 + pct * 0.35;
+      const cracking = pct < 0.3;
+      if (e._energyShieldCracking !== cracking) {
+        e._energyShieldCracking = cracking;
+        energyShieldMesh.material.color.setHex(cracking ? 0xff6a6a : 0x4da8ff);
+      }
+      energyShieldMesh.scale.setScalar(1 + Math.sin(performance.now() / 150) * (cracking ? 0.05 : 0.02));
     }
 
     const supportVisible = !!e.supportType && e.alive;
@@ -2002,21 +2586,42 @@ function updateEntityMeshes() {
       supportMesh.rotation.z = performance.now() / 800;
     }
 
-    const statusVisible = (e.slowActive || e.shockedActive) && e.alive;
+    // Single ground ring reads the MOST urgent active debuff (staggered >
+    // freeze > shocked > burn > corroded > plain slow) as a distinct color;
+    // the separate DOM icon row below shows every simultaneously-active
+    // effect precisely (a ring can only show one color at a time).
+    const statusVisible =
+      e.alive &&
+      (e.staggeredActive || e.freezeActive || e.shockedActive || e.burnActive || e.corrodedActive || e.slowActive);
     statusMesh.visible = statusVisible;
     if (statusVisible) {
-      // Shocked (weapon disabled) reads as an urgent flicker; a plain slow
-      // (no shock) stays a calm, steady blue — same mesh, different color
-      // driven by which debuff is actually active, cached like above so the
-      // color isn't rewritten every single frame while unchanged.
-      const wantFlicker = e.shockedActive;
-      if (e._statusMeshFlicker !== wantFlicker) {
-        e._statusMeshFlicker = wantFlicker;
-        if (!wantFlicker) statusMesh.material.color.setHex(0x4da8ff);
+      let key;
+      let flicker = false;
+      let color = 0x4da8ff;
+      if (e.staggeredActive) {
+        key = 'staggered';
+        flicker = true;
+      } else if (e.freezeActive) {
+        key = 'freeze';
+        color = 0x9fe8ff;
+      } else if (e.shockedActive) {
+        key = 'shocked';
+        flicker = true;
+      } else if (e.burnActive) {
+        key = 'burn';
+        color = 0xff6a1a;
+      } else if (e.corrodedActive) {
+        key = 'corroded';
+        color = 0x8cff5c;
+      } else {
+        key = 'slow';
       }
-      if (wantFlicker) {
-        const flicker = Math.sin(performance.now() / 70) > 0 ? 0xff4d4d : 0xffffff;
-        statusMesh.material.color.setHex(flicker);
+      if (flicker) {
+        statusMesh.material.color.setHex(Math.sin(performance.now() / 70) > 0 ? 0xff4d4d : 0xffffff);
+        e._statusMeshKey = key;
+      } else if (e._statusMeshKey !== key) {
+        e._statusMeshKey = key;
+        statusMesh.material.color.setHex(color);
       }
     }
 
@@ -2028,6 +2633,10 @@ function updateEntityMeshes() {
       if (e._nameTagShown !== false) {
         e._nameTagShown = false;
         e.nameTagEl.style.display = 'none';
+      }
+      if (e._statusIconsShown !== false) {
+        e._statusIconsShown = false;
+        e.statusIconRowEl.style.display = 'none';
       }
     } else {
       if (e._nameTagShown !== true) {
@@ -2046,6 +2655,23 @@ function updateEntityMeshes() {
         e._hpPct = hpPct;
         e.hpFillEl.style.width = hpPct + '%';
         e.hpFillEl.style.background = hpPct > 50 ? '#3ddc6c' : hpPct > 25 ? '#ffb020' : '#ff4d4d';
+      }
+
+      const iconsKey = buildStatusIconsKey(e);
+      const iconsVisible = iconsKey.length > 0;
+      if (e._statusIconsShown !== iconsVisible) {
+        e._statusIconsShown = iconsVisible;
+        e.statusIconRowEl.style.display = iconsVisible ? 'block' : 'none';
+      }
+      if (iconsVisible) {
+        e.statusIconRowEl.style.left = sx + 'px';
+        e.statusIconRowEl.style.top = sy - 34 + 'px';
+        if (e._statusIconsKey !== iconsKey) {
+          e._statusIconsKey = iconsKey;
+          let html = '';
+          for (const ch of iconsKey) html += STATUS_ICON_GLYPH[ch];
+          e.statusIconRowEl.textContent = html;
+        }
       }
     }
   }
@@ -2101,29 +2727,146 @@ function syncPickups() {
       scene.remove(entry.group);
       disposeObject3D(entry.group);
       entry.labelEl.remove();
+      entry.rarityTagEl.remove();
       pickupMeshes.delete(id);
     }
   }
 }
 
+// Vietnamese rarity callouts shown briefly under a pickup's icon — blank for
+// common/uncommon (section 27's "keep it minimal": only the notable tiers
+// get an extra text badge, common drops rely on the ring/glow alone).
+const RARITY_TAG_TEXT = { rare: 'HIẾM', epic: 'EPIC', legendary: 'HUYỀN THOẠI' };
+
+const PICKUP_POP_S = 0.55; // pop-up/rotate/land intro duration (section 29)
+
 function updatePickups(dt, tSec) {
   for (const entry of pickupMeshes.values()) {
+    entry.spawnAge += dt;
     entry.group.position.set(entry.x, 0, entry.z);
     entry.core.rotation.y += dt * 1.6;
-    entry.core.position.y = 1.1 + Math.sin(tSec * 2 + entry.x) * 0.15;
+
+    // Spawn-in "pop": overshoot scale-up + a higher initial bounce that
+    // settles into the normal idle bob (section 29) — rarer pickups get a
+    // slightly stronger pop via RARITY_META.glow, still just simple easing,
+    // no particle system.
+    if (entry.spawnAge < PICKUP_POP_S) {
+      const t = entry.spawnAge / PICKUP_POP_S;
+      const overshoot = Math.sin(t * Math.PI) * (1 - t) * 0.5;
+      const glow = (RARITY_META[entry.rarity] || RARITY_META.common).glow;
+      entry.group.scale.setScalar(t + overshoot * (0.4 + glow * 0.15));
+      entry.core.position.y = 1.1 + (1 - t) * 2.2 + Math.sin(tSec * 2 + entry.x) * 0.15;
+    } else {
+      if (entry.group.scale.x !== 1) entry.group.scale.setScalar(1);
+      entry.core.position.y = 1.1 + Math.sin(tSec * 2 + entry.x) * 0.15;
+    }
 
     const screenPos = _scratchVec3.set(entry.x, 2.1, entry.z).project(camera);
     if (screenPos.z > 1) {
       entry.labelEl.style.display = 'none';
+      entry.rarityTagEl.style.display = 'none';
       continue;
     }
+    const sx = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
+    const sy = (-screenPos.y * 0.5 + 0.5) * window.innerHeight;
     entry.labelEl.style.display = 'block';
-    entry.labelEl.style.left = (screenPos.x * 0.5 + 0.5) * window.innerWidth + 'px';
-    entry.labelEl.style.top = (-screenPos.y * 0.5 + 0.5) * window.innerHeight + 'px';
+    entry.labelEl.style.left = sx + 'px';
+    entry.labelEl.style.top = sy + 'px';
+
+    const tagText = RARITY_TAG_TEXT[entry.rarity];
+    if (tagText) {
+      entry.rarityTagEl.style.display = 'block';
+      entry.rarityTagEl.style.left = sx + 'px';
+      entry.rarityTagEl.style.top = sy + 18 + 'px';
+      entry.rarityTagEl.textContent = tagText;
+    } else {
+      entry.rarityTagEl.style.display = 'none';
+    }
+  }
+}
+
+// ---------- Area-effect zones (missile pod danger zones + the gravity core
+// anomaly) — cheap flat disc + boundary ring, scaled to the zone's radius,
+// no particle system (section 26/30). ----------
+const ZONE_VISUALS = {
+  danger: { color: 0xff3d3d, opacity: 0.26 },
+  gravity: { color: 0x8a5cff, opacity: 0.35 },
+};
+
+function createZoneMesh(kind) {
+  const meta = ZONE_VISUALS[kind] || ZONE_VISUALS.danger;
+  const group = new THREE.Group();
+  const discMat = new THREE.MeshBasicMaterial({
+    color: meta.color,
+    transparent: true,
+    opacity: meta.opacity,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 24), discMat);
+  disc.rotation.x = -Math.PI / 2;
+  disc.position.y = 0.08;
+  group.add(disc);
+
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: meta.color,
+    transparent: true,
+    opacity: Math.min(1, meta.opacity * 2),
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.88, 1, 28), ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.1;
+  group.add(ring);
+
+  scene.add(group);
+  return { group, disc, ring, kind };
+}
+
+function syncZones() {
+  const seen = new Set();
+  for (const z of latestZoneData) {
+    seen.add(z.id);
+    let entry = zoneMeshes.get(z.id);
+    if (!entry) {
+      entry = createZoneMesh(z.kind);
+      zoneMeshes.set(z.id, entry);
+    }
+    entry.x = z.x;
+    entry.z = z.z;
+    entry.radius = z.radius;
+  }
+  for (const [id, entry] of zoneMeshes) {
+    if (!seen.has(id)) {
+      scene.remove(entry.group);
+      disposeObject3D(entry.group);
+      zoneMeshes.delete(id);
+    }
+  }
+}
+
+function updateZonesVisual(tSec) {
+  for (const entry of zoneMeshes.values()) {
+    entry.group.position.set(entry.x, 0, entry.z);
+    // Scale only X/Z (not Y) — the disc/ring children carry a small local Y
+    // offset to sit just above the ground, which a uniform scale would also
+    // stretch, lifting them into the air proportional to the zone's radius.
+    entry.group.scale.set(entry.radius, 1, entry.radius);
+    const meta = ZONE_VISUALS[entry.kind] || ZONE_VISUALS.danger;
+    // Gravity breathes faster/harder (reads as an unstable, more dangerous
+    // anomaly) than a danger zone's slow steady pulse.
+    const pulseSpeed = entry.kind === 'gravity' ? 5 : 3;
+    const pulseDepth = entry.kind === 'gravity' ? 0.35 : 0.2;
+    const pulse = 1 - pulseDepth + Math.sin(tSec * pulseSpeed) * pulseDepth;
+    entry.disc.material.opacity = meta.opacity * pulse;
+    entry.ring.material.opacity = Math.min(1, meta.opacity * 2 * pulse);
   }
 }
 
 let adsT = 0; // eased 0..1, 0 = normal view, 1 = fully ADS-zoomed (RMB held)
+let sprintT = 0; // eased 0..1, 0 = normal view, 1 = fully sprinting
+const SPRINT_FOV_BONUS = 6; // subtle widen while sprinting — a "feel" of speed, never excessive (section 4)
 
 // RMB = ADS/zoom. Fully independent of target-lock — attemptTargetLock/
 // updateAimLock never touch FOV or camera distance, so locking a target
@@ -2138,10 +2881,18 @@ function updateCamera(dt) {
   const targetZ = self.render.z;
   const targetY = 0.64;
 
-  const adsTarget = rmbDown ? 1 : 0;
+  // Sprint (section 5): temporarily disables ADS outright — holding RMB
+  // while sprinting simply does nothing until Shift is released, at which
+  // point ADS becomes available again immediately, still eased like normal.
+  const adsTarget = rmbDown && !sprintHeld ? 1 : 0;
   adsT += (adsTarget - adsT) * Math.min(1, ADS_TRANSITION_SPEED * dt);
+  // Only widen FOV while ACTUALLY sprinting (server-confirmed, i.e. stamina
+  // allowed it) — holding Shift with 0 stamina or standing still shouldn't
+  // change the camera at all.
+  const sprintTarget = self.sprinting ? 1 : 0;
+  sprintT += (sprintTarget - sprintT) * Math.min(1, ADS_TRANSITION_SPEED * dt);
   const camDist = CAM_DIST - CAM_DIST * (1 - ADS_CAM_DIST_MULT) * adsT;
-  const fov = BASE_FOV - (BASE_FOV - ADS_FOV) * adsT;
+  const fov = BASE_FOV - (BASE_FOV - ADS_FOV) * adsT + SPRINT_FOV_BONUS * sprintT;
 
   const camX = targetX - Math.sin(yaw) * camDist * Math.cos(camPitch);
   const camZ = targetZ - Math.cos(yaw) * camDist * Math.cos(camPitch);
@@ -2176,6 +2927,70 @@ let lastHudSupportType = null;
 let lastHudSupportTotalMs = 1; // captured on activation (server only sends expiresAt, not total duration)
 let lastHudAlive = null;
 let lastHudRespawnSec = null;
+let lastHudObjectiveKey = null;
+let lastHudBossId = null;
+let lastHudBossHpPct = null;
+let lastHudBossPhase = null;
+let lastHudStaminaPct = null;
+let lastHudStaminaFaded = null;
+
+// Objective HUD (section 22): only the fields relevant to the CURRENT
+// stage's objective type are shown — a plain ELIMINATE stage just keeps
+// the existing enemy-count line, no extra bar.
+function updateObjectiveHud(status) {
+  const obj = status && status.objective;
+  const key = obj ? `${obj.type}|${obj.elapsedS}|${obj.objectiveHp}` : '';
+  if (key === lastHudObjectiveKey) return;
+  lastHudObjectiveKey = key;
+  if (!obj || obj.type === 'eliminate' || obj.type === 'boss') {
+    objectiveRowEl.classList.add('hidden');
+    return;
+  }
+  objectiveRowEl.classList.remove('hidden');
+  if (obj.type === 'survive') {
+    const remaining = Math.max(0, obj.durationS - obj.elapsedS);
+    objectiveLabelEl.textContent = `SỐNG SÓT — còn ${remaining}s`;
+    objectiveBarWrapEl.classList.remove('hidden');
+    objectiveBarEl.style.width = Math.min(100, (obj.elapsedS / obj.durationS) * 100) + '%';
+  } else if (obj.type === 'defend') {
+    const pct = obj.objectiveMaxHp > 0 ? (obj.objectiveHp / obj.objectiveMaxHp) * 100 : 0;
+    objectiveLabelEl.textContent = `PHÒNG THỦ MỤC TIÊU`;
+    objectiveBarWrapEl.classList.remove('hidden');
+    objectiveBarEl.style.width = Math.max(0, Math.min(100, pct)) + '%';
+  } else if (obj.type === 'hunt') {
+    objectiveLabelEl.textContent = 'TRUY LÙNG — tìm và hạ mục tiêu tinh nhuệ (⭐ trên minimap)';
+    objectiveBarWrapEl.classList.add('hidden');
+  }
+}
+
+// Boss HUD (sections 27-34) — cinematic name/HP bar, phase pips, enrage tint.
+function updateBossHud(status) {
+  const boss = status && status.boss;
+  if (!boss) {
+    if (lastHudBossId !== null) {
+      lastHudBossId = null;
+      bossHudEl.classList.add('hidden');
+    }
+    return;
+  }
+  bossHudEl.classList.remove('hidden');
+  if (boss.id !== lastHudBossId) {
+    lastHudBossId = boss.id;
+    bossHudNameEl.textContent = boss.name;
+    let pips = '';
+    for (let i = 0; i < 4; i++) pips += '<span></span>';
+    bossHudPhasePipsEl.innerHTML = pips;
+  }
+  const hpPct = Math.max(0, Math.min(100, (boss.hp / boss.maxHp) * 100));
+  if (hpPct !== lastHudBossHpPct) {
+    lastHudBossHpPct = hpPct;
+    bossHudBarEl.style.width = hpPct + '%';
+  }
+  if (boss.phase !== lastHudBossPhase) {
+    lastHudBossPhase = boss.phase;
+  }
+  bossHudBarEl.classList.toggle('enraged', !!boss.enraged);
+}
 
 function updateHud() {
   const self = entities.get(selfId);
@@ -2193,6 +3008,8 @@ function updateHud() {
       lastHudEnemiesRemaining = latestStageStatus.enemiesRemaining;
       campaignEnemiesEl.textContent = latestStageStatus.enemiesRemaining;
     }
+    updateObjectiveHud(latestStageStatus);
+    updateBossHud(latestStageStatus);
   }
 
   if (!self) return;
@@ -2200,6 +3017,25 @@ function updateHud() {
   if (hpPct !== lastHudHpPct) {
     lastHudHpPct = hpPct;
     healthBar.style.width = hpPct + '%';
+  }
+
+  // Stamina bar (sections 1-3): fades out at full stamina when not
+  // sprinting so it doesn't clutter the HUD, and tints toward red as it
+  // nears empty.
+  if (self.maxStamina > 0) {
+    staminaWrapEl.classList.remove('hidden');
+    const stPct = Math.max(0, Math.min(100, (self.stamina / self.maxStamina) * 100));
+    const faded = stPct >= 99.5 && !self.sprinting;
+    if (faded !== lastHudStaminaFaded) {
+      lastHudStaminaFaded = faded;
+      staminaWrapEl.style.opacity = faded ? '0' : '1';
+    }
+    if (stPct !== lastHudStaminaPct) {
+      lastHudStaminaPct = stPct;
+      staminaBarEl.style.width = stPct + '%';
+      staminaBarEl.classList.toggle('empty', stPct <= 0.1);
+      staminaBarEl.classList.toggle('low', stPct > 0.1 && stPct < 30);
+    }
   }
   const hpLabel = `${Math.max(0, Math.round(self.hp))} / ${self.maxHp}`;
   if (hpLabel !== lastHudHpLabel) {
@@ -2225,6 +3061,10 @@ function updateHud() {
     const weaponMeta = WEAPON_META[self.weaponType] || WEAPON_META.normal;
     weaponIconEl.textContent = weaponMeta.icon;
     weaponLabelEl.textContent = weaponMeta.label;
+    // Short subtitle naming the ammo's actual gameplay effect (section 32) —
+    // never shown for the base cannon, which has none.
+    weaponTagEl.classList.toggle('hidden', !weaponMeta.tag);
+    if (weaponMeta.tag) weaponTagEl.textContent = weaponMeta.tag;
   }
 
   // The buffsKey captures every bit of state the rendered HTML depends on
@@ -2420,7 +3260,11 @@ function animate() {
     syncBullets();
     syncPickups();
     updatePickups(dt, now / 1000);
+    syncZones();
+    updateZonesVisual(now / 1000);
     updateBursts(dt);
+    updateLightningBolts(dt);
+    updateBossTelegraphVisual();
     updateCombatNumbers(dt);
     updateCamera(dt);
     updateHud();

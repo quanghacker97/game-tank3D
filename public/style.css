@@ -138,7 +138,47 @@ button {
 
 /* ---------- Stage select grid ---------- */
 
-#stageGrid {
+#difficultyRow {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.difficultyBtn {
+  padding: 7px 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.05);
+  color: #cfd6e0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.difficultyBtn.active {
+  background: linear-gradient(180deg, #ffb020, #e6890a);
+  color: #1a1200;
+  border-color: transparent;
+}
+
+#chapterList {
+  max-height: 56vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.chapterBlock { margin-bottom: 18px; }
+.chapterHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.chapterHeader .chapterName { font-weight: 800; font-size: 14px; color: #ffcf70; }
+.chapterHeader .chapterMeta { font-size: 11px; color: #7c8798; }
+.chapterBlock.locked .chapterHeader { opacity: 0.5; }
+
+#stageGrid, .chapterStageGrid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 12px;
@@ -163,10 +203,42 @@ button {
 }
 .stageCard.locked:hover { border-color: rgba(255,255,255,0.1); }
 .stageCard .lockIcon { position: absolute; top: 8px; right: 10px; font-size: 14px; }
+.stageCard.boss { border-color: rgba(255,77,77,0.5); background: linear-gradient(180deg, #3a1e1e, #241414); }
+.stageCard.boss .stageName { color: #ff8a8a; }
+.stageCard.cleared::before {
+  content: '✓';
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  font-size: 13px;
+  color: #3ddc6c;
+}
 
 /* ---------- Garage ---------- */
 
-#upgradeList { display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px; }
+#upgradeCategoryTabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-bottom: 14px;
+}
+.categoryTab {
+  padding: 7px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.05);
+  color: #cfd6e0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.categoryTab.active {
+  background: linear-gradient(180deg, #4da8ff, #1a7fe0);
+  color: #001529;
+  border-color: transparent;
+}
+
+#upgradeList { display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px; max-height: 46vh; overflow-y: auto; }
 
 .upgradeRow {
   display: flex;
@@ -263,7 +335,7 @@ button {
 #healthWrap {
   position: absolute;
   left: 24px;
-  bottom: 28px;
+  bottom: 34px;
   width: 240px;
   height: 20px;
   background: rgba(0,0,0,0.4);
@@ -280,11 +352,34 @@ button {
 #healthLabel {
   position: absolute;
   left: 24px;
-  bottom: 50px;
+  bottom: 58px;
   font-size: 13px;
   font-weight: 600;
   text-shadow: 0 1px 2px #000;
 }
+
+/* Sprint/Stamina (sections 1-3): sits between the health and reload bars,
+   fades in only while relevant so it doesn't clutter the HUD at full stamina. */
+#staminaWrap {
+  position: absolute;
+  left: 24px;
+  bottom: 22px;
+  width: 240px;
+  height: 8px;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 4px;
+  overflow: hidden;
+  transition: opacity 0.3s ease;
+}
+#staminaBar {
+  height: 100%;
+  width: 100%;
+  background: #3ddc6c;
+  transition: width 0.05s linear, background 0.2s ease;
+}
+#staminaBar.low { background: #ffb020; }
+#staminaBar.empty { background: #ff4d4d; }
 
 #reloadWrap {
   position: absolute;
@@ -306,7 +401,7 @@ button {
 #buffRow {
   position: absolute;
   left: 24px;
-  bottom: 76px;
+  bottom: 84px;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
@@ -330,6 +425,16 @@ button {
 .buffBadge.buff-speed { color: #4de6cf; border-color: rgba(77,230,207,0.4); }
 .buffBadge.buff-rapidfire { color: #ff8fd6; border-color: rgba(255,143,214,0.4); }
 .buffBadge.buff-invuln { color: #c99bff; border-color: rgba(201,155,255,0.4); }
+
+#weaponTag {
+  display: block;
+  margin-top: 2px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  color: #ffd166;
+  opacity: 0.9;
+}
 
 #supportPanel {
   position: absolute;
@@ -437,6 +542,83 @@ button {
   font-size: 12.5px;
   font-weight: 600;
   color: #cfe0ff;
+  text-align: center;
+}
+#objectiveRow { margin-top: 4px; }
+#objectiveLabel { color: #ffd166; font-size: 11.5px; }
+#objectiveBarWrap {
+  width: 180px;
+  height: 5px;
+  margin: 4px auto 0;
+  background: rgba(0,0,0,0.5);
+  border-radius: 3px;
+  overflow: hidden;
+}
+#objectiveBar { height: 100%; width: 100%; background: #ffd166; transition: width 0.2s ease; }
+
+/* Boss HUD (sections 27-34): a cinematic, top-center bar — separate from
+   the small nameTag HP bars every normal enemy uses. */
+#bossHud {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(480px, 80vw);
+  text-align: center;
+}
+#bossHudName {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: #ff6b6b;
+  text-shadow: 0 2px 4px #000;
+  margin-bottom: 4px;
+}
+#bossHudBarWrap {
+  position: relative;
+  height: 16px;
+  background: rgba(0,0,0,0.5);
+  border: 1px solid rgba(255,107,107,0.5);
+  border-radius: 8px;
+  overflow: hidden;
+}
+#bossHudBar {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #8b1a1a, #ff4d4d);
+  transition: width 0.25s ease-out, background 0.3s ease;
+}
+#bossHudBar.enraged { background: linear-gradient(90deg, #ff4d00, #ffcc00); }
+#bossHudPhasePips {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+#bossHudPhasePips span {
+  flex: 1;
+  border-right: 2px solid rgba(0,0,0,0.55);
+}
+#bossHudPhasePips span:last-child { border-right: none; }
+
+/* Boss attack telegraph (section 31) — a plain, readable warning shown at
+   the boss's screen position before an attack executes. */
+#bossTelegraphEl {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 13px;
+  font-weight: 800;
+  color: #fff066;
+  background: rgba(60,20,0,0.55);
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,214,0,0.6);
+  white-space: nowrap;
+  pointer-events: none;
+  animation: telegraphPulse 0.4s ease-in-out infinite alternate;
+}
+@keyframes telegraphPulse {
+  from { opacity: 0.7; }
+  to { opacity: 1; }
 }
 
 #killfeed {
@@ -537,6 +719,30 @@ button {
 }
 #stageResultTitle { font-size: 28px; font-weight: 800; margin-bottom: 8px; }
 #stageResultSub { font-size: 14px; color: #cfd6e0; margin-bottom: 20px; }
+
+#perkPickSection { margin-bottom: 20px; }
+#perkPickLabel { font-size: 12px; font-weight: 700; letter-spacing: 1.5px; color: #9aa7ba; margin-bottom: 10px; }
+#perkPickCards { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.perkCard {
+  width: 150px;
+  padding: 12px 10px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #1e2838, #141c28);
+  border: 2px solid rgba(255,255,255,0.12);
+  cursor: pointer;
+  text-align: center;
+}
+.perkCard:hover { border-color: #ffb020; }
+.perkCard .perkIcon { font-size: 22px; margin-bottom: 4px; }
+.perkCard .perkLabel { font-weight: 800; font-size: 12px; margin-bottom: 4px; }
+.perkCard .perkDesc { font-size: 11px; color: #b8c2cf; }
+.perkCard.rarity-common { border-color: rgba(154,165,177,0.5); }
+.perkCard.rarity-uncommon { border-color: rgba(61,220,108,0.6); }
+.perkCard.rarity-rare { border-color: rgba(77,168,255,0.6); }
+.perkCard.rarity-epic { border-color: rgba(179,92,255,0.6); }
+.perkCard.rarity-legendary { border-color: rgba(255,176,32,0.7); }
+.perkCard.chosen { opacity: 0.55; cursor: default; }
+.perkCard.chosen .perkLabel::after { content: ' ✓'; color: #3ddc6c; }
 #stageResultButtons { display: flex; gap: 10px; justify-content: center; }
 #stageResultButtons button {
   padding: 10px 16px;
@@ -565,6 +771,8 @@ button {
   white-space: nowrap;
 }
 .nameTag.bot { color: #ff9a9a; }
+.nameTag.elite { color: #ffd166; font-weight: 800; }
+.nameTag.boss { color: #ff6b6b; font-weight: 800; font-size: 13px; }
 .nameTagHp {
   width: 46px;
   height: 4px;
@@ -598,6 +806,29 @@ button {
 @keyframes pickupPulseSupport {
   0%, 100% { transform: translate(-50%, -50%) scale(1); }
   50% { transform: translate(-50%, -50%) scale(1.3); }
+}
+
+.pickupRarityTag {
+  position: absolute;
+  transform: translate(-50%, 0);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  pointer-events: none;
+  text-shadow: 0 1px 3px #000;
+  white-space: nowrap;
+}
+
+/* Compact per-entity debuff readout (section 33) — a few small icons above
+   the name tag, only the ones currently active. */
+.statusIconRow {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  font-size: 13px;
+  pointer-events: none;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px #000;
+  letter-spacing: 1px;
 }
 
 .combatNumber {

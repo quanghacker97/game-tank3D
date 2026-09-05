@@ -20,14 +20,17 @@ function allRooms() {
   return rooms;
 }
 
-/** Creates a solo campaign room for the given stage number (1-based). Returns null if the stage is invalid. */
-function createCampaignRoom(socketId, stageNumber) {
+/** Creates a solo campaign room for the given stage number (1-based). Returns null if the stage is invalid.
+ * Enemy waves are NOT spawned here — Game.js's own wave scheduler (see
+ * _updateWaves, called every tick) spawns wave 1 on the room's first tick
+ * and every subsequent wave/boss progressively (section 23), rather than
+ * everything existing the instant the room is created. */
+function createCampaignRoom(socketId, stageNumber, difficultyKey) {
   const stageDef = STAGES[stageNumber - 1];
   if (!stageDef) return null;
 
   const roomId = `campaign-${socketId}`;
-  const game = new Game(roomId, 'campaign', stageDef);
-  for (const tier of stageDef.bots) game.addBot(tier);
+  const game = new Game(roomId, 'campaign', stageDef, difficultyKey);
   rooms.set(roomId, game);
   return { roomId, game };
 }

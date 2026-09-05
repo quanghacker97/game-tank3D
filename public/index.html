@@ -12,7 +12,19 @@
 
   <div id="hud">
     <div id="campaignBar" class="hidden">
-      <span id="campaignStageName"></span> — Còn <span id="campaignEnemies">0</span> kẻ địch
+      <div id="campaignBarMain"><span id="campaignStageName"></span> — Còn <span id="campaignEnemies">0</span> kẻ địch</div>
+      <div id="objectiveRow" class="hidden">
+        <span id="objectiveLabel"></span>
+        <div id="objectiveBarWrap" class="hidden"><div id="objectiveBar"></div></div>
+      </div>
+    </div>
+
+    <div id="bossHud" class="hidden">
+      <div id="bossHudName"></div>
+      <div id="bossHudBarWrap">
+        <div id="bossHudBar"></div>
+        <div id="bossHudPhasePips"></div>
+      </div>
     </div>
 
     <div id="hudCurrency">💰 <span id="hudCurrencyValue">0</span></div>
@@ -24,9 +36,15 @@
       <div id="healthBar"></div>
       <div id="healthLabel">100 / 100</div>
     </div>
+    <div id="staminaWrap" class="hidden">
+      <div id="staminaBar"></div>
+    </div>
     <div id="reloadWrap"><div id="reloadBar"></div></div>
     <div id="buffRow">
-      <div id="weaponBadge"><span id="weaponIcon">🔫</span> <span id="weaponLabel">Pháo thường</span></div>
+      <div id="weaponBadge">
+        <span id="weaponIcon">🔫</span> <span id="weaponLabel">Pháo thường</span>
+        <span id="weaponTag" class="hidden"></span>
+      </div>
       <div id="activeBuffs"></div>
     </div>
     <div id="supportPanel" class="hidden">
@@ -49,6 +67,10 @@
       <div id="stageResultBox">
         <div id="stageResultTitle"></div>
         <div id="stageResultSub"></div>
+        <div id="perkPickSection" class="hidden">
+          <div id="perkPickLabel">CHỌN NÂNG CẤP</div>
+          <div id="perkPickCards"></div>
+        </div>
         <div id="stageResultButtons">
           <button id="btnStageNext" class="hidden">Ải tiếp theo</button>
           <button id="btnStageRetry">Chơi lại</button>
@@ -56,6 +78,8 @@
         </div>
       </div>
     </div>
+
+    <div id="bossTelegraphEl" class="hidden"></div>
 
     <div id="touchControls" class="hidden">
       <div id="touchJoystickBase">
@@ -88,13 +112,15 @@
 
     <div id="panelStages" class="panel wide hidden">
       <h1>Chiến dịch — chọn ải</h1>
-      <div id="stageGrid"></div>
+      <div id="difficultyRow"></div>
+      <div id="chapterList"></div>
       <button class="backBtn" id="stagesBack">← Quay lại</button>
     </div>
 
     <div id="panelGarage" class="panel wide hidden">
       <h1>Gara nâng cấp</h1>
       <div class="currencyBadge">💰 <span id="garageCurrency">0</span> Xu</div>
+      <div id="upgradeCategoryTabs"></div>
       <div id="upgradeList"></div>
       <button class="backBtn" id="garageBack">← Quay lại</button>
     </div>

@@ -130,13 +130,6 @@ const DIFFICULTY_META = {
 };
 const DIFFICULTY_KEYS = Object.keys(DIFFICULTY_META);
 
-const UPGRADE_TRACKS = [
-  { key: 'power', icon: '⚔️', label: 'Sức mạnh', fmt: (lv) => `${UPGRADES.power[lv]} sát thương` },
-  { key: 'defense', icon: '🛡️', label: 'Phòng thủ', fmt: (lv) => `${UPGRADES.defense[lv]} máu` },
-  { key: 'agility', icon: '💨', label: 'Nhanh nhẹn', fmt: (lv) => `${UPGRADES.agilityMove[lv].toFixed(1)} m/s` },
-  { key: 'rate', icon: '🔫', label: 'Tốc độ bắn', fmt: (lv) => `${(1000 / UPGRADES.rate[lv]).toFixed(2)} phát/s` },
-];
-
 // Visual/label metadata for weapons & pickups — must mirror the kinds server/
 // constants.js's WEAPON_TYPES / PICKUP_TYPES can produce. Damage/splash stay
 // server-authoritative; cooldownMult is duplicated here too (must match
@@ -641,7 +634,6 @@ const changeNameLinkEl = document.getElementById('changeNameLink');
 const btnArenaEl = document.getElementById('btnArena');
 const btnCampaignEl = document.getElementById('btnCampaign');
 const btnGarageEl = document.getElementById('btnGarage');
-const stageGridEl = document.getElementById('stageGrid');
 const difficultyRowEl = document.getElementById('difficultyRow');
 const chapterListEl = document.getElementById('chapterList');
 const stagesBackEl = document.getElementById('stagesBack');
@@ -1472,12 +1464,28 @@ function resetGameState() {
   stageResultShown = false;
   latestStageStatus = null;
   stageResultOverlayEl.classList.add('hidden');
+  perkPickSectionEl.classList.add('hidden');
   deathBanner.classList.add('hidden');
   killfeedEl.innerHTML = '';
   keys.clear();
   firing = false;
   lmbDown = false;
   rmbDown = false;
+  sprintHeld = false;
+  // Boss/objective/stamina HUD state (sections 1-3, 22, 27-34) — cleared so
+  // a fresh join never inherits stale change-guard values from a previous
+  // session (which would otherwise suppress the first real update).
+  bossHudEl.classList.add('hidden');
+  objectiveRowEl.classList.add('hidden');
+  staminaWrapEl.classList.add('hidden');
+  bossTelegraphEl.classList.add('hidden');
+  bossTelegraphActive = null;
+  lastHudObjectiveKey = null;
+  lastHudBossId = null;
+  lastHudBossHpPct = null;
+  lastHudBossPhase = null;
+  lastHudStaminaPct = null;
+  lastHudStaminaFaded = null;
   if (document.pointerLockElement === canvas) document.exitPointerLock();
   Sound.stopEngine();
 }
@@ -1948,6 +1956,62 @@ socket.on('state', (msg) => {
   }
 });
 
+// Post-stage perk pick (sections 15-17, 39): weighted-by-rarity roll of 3
+// DISTINCT perks, excluding any already at their maxStacks cap. Choosing
+// one is a free, permanent, non-currency bonus layered on top of the
+// Garage — picking one disables the other two cards for this stage result
+// (only one choice per clear, per the spec).
+function rollPerkChoices(count) {
+  const pool = PERK_POOL.filter((p) => (profile.perks[p.id] || 0) < p.maxStacks);
+  const available = pool.slice();
+  const chosen = [];
+  while (chosen.length < count && available.length > 0) {
+    let total = 0;
+    for (const p of available) total += PERK_RARITY_WEIGHT[p.rarity] || 1;
+    let roll = Math.random() * total;
+    let idx = 0;
+    for (; idx < available.length - 1; idx++) {
+      roll -= PERK_RARITY_WEIGHT[available[idx].rarity] || 1;
+      if (roll <= 0) break;
+    }
+    chosen.push(available[idx]);
+    available.splice(idx, 1);
+  }
+  return chosen;
+}
+
+function renderPerkPick() {
+  const choices = rollPerkChoices(3);
+  if (choices.length === 0) {
+    perkPickSectionEl.classList.add('hidden');
+    return;
+  }
+  perkPickSectionEl.classList.remove('hidden');
+  perkPickCardsEl.innerHTML = '';
+  let chosenAlready = false;
+  for (const perk of choices) {
+    const card = document.createElement('div');
+    card.className = `perkCard rarity-${perk.rarity}`;
+    card.innerHTML = `
+      <div class="perkIcon">${perk.icon}</div>
+      <div class="perkLabel">${escapeHtml(perk.label)}</div>
+      <div class="perkDesc">${escapeHtml(perk.desc)}</div>
+    `;
+    card.addEventListener('click', () => {
+      if (chosenAlready) return;
+      chosenAlready = true;
+      profile.perks[perk.id] = Math.min(perk.maxStacks, (profile.perks[perk.id] || 0) + 1);
+      saveProfile();
+      card.classList.add('chosen');
+      for (const other of perkPickCardsEl.querySelectorAll('.perkCard')) {
+        if (other !== card) other.classList.add('chosen');
+      }
+      Sound.pickup();
+    });
+    perkPickCardsEl.appendChild(card);
+  }
+}
+
 function showStageResult(status) {
   stageResultShown = true;
   if (document.pointerLockElement === canvas) document.exitPointerLock();
@@ -1962,8 +2026,10 @@ function showStageResult(status) {
     stageResultTitleEl.textContent = '🎉 Hoàn thành!';
     stageResultSubEl.textContent = `${status.stageName} — Nhận +${status.reward} Xu`;
     btnStageNextEl.classList.toggle('hidden', !STAGES_META.length || status.stageId >= STAGES_META.length);
+    renderPerkPick();
     Sound.stageClear();
   } else {
+    perkPickSectionEl.classList.add('hidden');
     stageResultTitleEl.textContent = '💥 Thất bại';
     stageResultSubEl.textContent = `${status.stageName} — Thử lại nào!`;
     btnStageNextEl.classList.add('hidden');
@@ -3199,9 +3265,13 @@ function updateMinimap() {
   for (const [id, e] of entities) {
     if (!e.alive || id === selfId) continue;
     const p = toMap(e.render.x, e.render.z);
-    ctx.fillStyle = e.isBot ? '#ff8a8a' : '#e8edf4';
+    // Elite/boss (sections 26-27) get a distinct gold/larger marker so a
+    // HUNT objective's target — or an incoming boss — is findable at a
+    // glance rather than blending into the normal red bot dots.
+    const radius = e.isBoss ? 5 : e.isElite ? 4 : 3.2;
+    ctx.fillStyle = e.isBoss ? '#ff3d3d' : e.isElite ? '#ffd166' : e.isBot ? '#ff8a8a' : '#e8edf4';
     ctx.beginPath();
-    ctx.arc(p.px, p.py, 3.2, 0, Math.PI * 2);
+    ctx.arc(p.px, p.py, radius, 0, Math.PI * 2);
     ctx.fill();
   }
 

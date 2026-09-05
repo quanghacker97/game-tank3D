@@ -18,6 +18,7 @@ const LOCK_TURN_RATE = 3.0; // rad/sec turret tracking speed while target-locked
 const LOCK_MAX_RANGE = 90;
 const LOCK_MAX_ANGLE = 0.3; // rad (~17deg) cone around the aim direction for LMB+RMB target acquisition
 
+
 const MAX_UPGRADE_LEVEL = 5;
 const UPGRADES = {
   power: [25, 29, 33, 37, 41, 45],

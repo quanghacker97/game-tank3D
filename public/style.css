@@ -95,8 +95,9 @@ button {
 #continueBtn:hover, .menuBtn:hover { filter: brightness(1.08); }
 #continueBtn:disabled { opacity: 0.6; cursor: default; }
 
-.menuBtn:nth-of-type(2) { background: linear-gradient(180deg, #4da8ff, #1a7fe0); color: #001529; }
-.menuBtn:nth-of-type(3) { background: linear-gradient(180deg, #3ddc6c, #22a848); color: #002b0a; }
+.menuBtn:nth-of-type(2) { background: linear-gradient(180deg, #ff6b6b, #d63a3a); color: #2b0000; }
+.menuBtn:nth-of-type(3) { background: linear-gradient(180deg, #4da8ff, #1a7fe0); color: #001529; }
+.menuBtn:nth-of-type(4) { background: linear-gradient(180deg, #3ddc6c, #22a848); color: #002b0a; }
 
 #loginStatus {
   margin-top: 12px;
@@ -493,6 +494,19 @@ button {
   color: #ffcf70;
 }
 
+#teamBadge {
+  position: absolute;
+  top: 54px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 5px 16px;
+  border-radius: 20px;
+  font-weight: 700;
+  font-size: 12.5px;
+}
+#teamBadge.team-red { background: rgba(231,76,60,0.3); border: 1px solid rgba(231,76,60,0.6); color: #ff8a80; }
+#teamBadge.team-blue { background: rgba(52,152,219,0.3); border: 1px solid rgba(52,152,219,0.6); color: #7cc4ff; }
+
 #menuLeaveBtn {
   position: absolute;
   top: 14px;
@@ -671,6 +685,8 @@ button {
   padding-bottom: 4px;
   margin-bottom: 4px;
 }
+#scoreboard .hdr.team-red { color: #ff8a80; border-bottom-color: rgba(231,76,60,0.4); }
+#scoreboard .hdr.team-blue { color: #7cc4ff; border-bottom-color: rgba(52,152,219,0.4); margin-top: 8px; }
 
 #helpText {
   position: absolute;
@@ -773,6 +789,7 @@ button {
 .nameTag.bot { color: #ff9a9a; }
 .nameTag.elite { color: #ffd166; font-weight: 800; }
 .nameTag.boss { color: #ff6b6b; font-weight: 800; font-size: 13px; }
+.nameTag.teammate { color: #7cc4ff; }
 .nameTagHp {
   width: 46px;
   height: 4px;

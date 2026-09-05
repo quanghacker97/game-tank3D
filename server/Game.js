@@ -9,7 +9,9 @@ const {
   BULLET_LIFETIME_MS,
   OBSTACLES,
   SPAWN_POINTS,
+  TEAM_SPAWN_POINTS,
   PLAYER_COLORS,
+  TEAM_COLORS,
   MAX_UPGRADE_LEVEL,
   UPGRADES,
   UPGRADE_CATALOG,
@@ -77,8 +79,9 @@ let nextBotSeq = 1;
 let nextPickupId = 1;
 let nextZoneId = 1;
 
-function randomSpawn() {
-  const p = SPAWN_POINTS[Math.floor(Math.random() * SPAWN_POINTS.length)];
+function randomSpawn(team) {
+  const pool = team && TEAM_SPAWN_POINTS[team] ? TEAM_SPAWN_POINTS[team] : SPAWN_POINTS;
+  const p = pool[Math.floor(Math.random() * pool.length)];
   // Face roughly toward the center of the arena.
   const rotY = Math.atan2(-p.x, -p.z);
   return { x: p.x, z: p.z, rotY };
@@ -440,10 +443,16 @@ class Game {
     this._bossSpawned = false;
   }
 
-  addPlayer(id, name, loadout, perks) {
-    const spawn = randomSpawn();
-    const color = PLAYER_COLORS[this._colorIndex % PLAYER_COLORS.length];
-    this._colorIndex++;
+  addPlayer(id, name, loadout, perks, team) {
+    team = team && TEAM_COLORS[team] ? team : null;
+    const spawn = randomSpawn(team);
+    let color;
+    if (team) {
+      color = TEAM_COLORS[team];
+    } else {
+      color = PLAYER_COLORS[this._colorIndex % PLAYER_COLORS.length];
+      this._colorIndex++;
+    }
     const stats = statsFromLoadout(loadout, perks);
     const maxStamina = MAX_STAMINA + stats.maxStaminaBonus;
 
@@ -451,6 +460,7 @@ class Game {
       id,
       name: sanitizeName(name),
       isBot: false,
+      team,
       x: spawn.x,
       z: spawn.z,
       bodyRot: spawn.rotY,
@@ -562,6 +572,31 @@ class Game {
     this.players.set(id, bot);
     if (opts.bossDef) this.bossId = id;
     return bot;
+  }
+
+  // Team Deathmatch: balances new joins onto whichever side currently has
+  // fewer players (coin flip on a tie) so a room never lopsidedly stacks one
+  // side.
+  assignTeam() {
+    let red = 0;
+    let blue = 0;
+    for (const p of this.players.values()) {
+      if (p.team === 'red') red++;
+      else if (p.team === 'blue') blue++;
+    }
+    if (red === blue) return Math.random() < 0.5 ? 'red' : 'blue';
+    return red < blue ? 'red' : 'blue';
+  }
+
+  // Friendly-fire gate used by every PvP damage/target-selection path below:
+  // true for a self-hit (harmless — callers already special-case it) AND for
+  // two players sharing a truthy `team` (Team Deathmatch). Arena/campaign
+  // players never have `team` set, so this is always false for them.
+  _sameTeam(idA, idB) {
+    if (idA === idB) return true;
+    const a = this.players.get(idA);
+    const b = this.players.get(idB);
+    return !!(a && b && a.team && a.team === b.team);
   }
 
   removePlayer(id) {
@@ -1097,8 +1132,14 @@ class Game {
       preferLowestHp = false,
       preferHighestHp = false,
     } = opts;
+    // Every call site passes the shooter's own id as excludeId, so deriving
+    // its team here (rather than threading a team param through all four
+    // call sites) makes every automatic-targeting path — homing ammo,
+    // support weapons, lightning's chain — team-safe for free.
+    const excludeTeam = (this.players.get(excludeId) || {}).team || null;
     const consider = (target) => {
       if (!target || !target.alive || target.id === excludeId) return false;
+      if (excludeTeam && target.team === excludeTeam) return false;
       if (excludeIds && excludeIds.has(target.id)) return false;
       const dx = target.x - originX;
       const dz = target.z - originZ;
@@ -1406,7 +1447,7 @@ class Game {
     // (see spawnBurst in client.js) rather than this needing its own VFX.
     this.events.push({ type: 'explosion', x: detonateAt.x, z: detonateAt.z });
     for (const target of this.players.values()) {
-      if (!target.alive || target.id === bullet.ownerId) continue;
+      if (!target.alive || this._sameTeam(bullet.ownerId, target.id)) continue;
       const dx = target.x - detonateAt.x;
       const dz = target.z - detonateAt.z;
       const dist = Math.hypot(dx, dz);
@@ -1503,7 +1544,7 @@ class Game {
       if (zone.kind === 'danger' && now >= zone.nextTickAt) {
         zone.nextTickAt = now + zone.tickMs;
         for (const target of this.players.values()) {
-          if (!target.alive || target.id === zone.ownerId) continue;
+          if (!target.alive || this._sameTeam(zone.ownerId, target.id)) continue;
           const dx = target.x - zone.x;
           const dz = target.z - zone.z;
           if (dx * dx + dz * dz > zone.radius * zone.radius) continue;
@@ -1635,7 +1676,7 @@ class Game {
 
     if (def.special === 'timeslow') {
       for (const other of this.players.values()) {
-        if (!other.alive || other.id === player.id) continue;
+        if (!other.alive || this._sameTeam(player.id, other.id)) continue;
         const dx = other.x - player.x;
         const dz = other.z - player.z;
         if (dx * dx + dz * dz > def.radius * def.radius) continue;
@@ -1681,7 +1722,7 @@ class Game {
     if (def.special === 'gravity') {
       const anchor = player.support;
       for (const other of this.players.values()) {
-        if (!other.alive || other.id === player.id) continue;
+        if (!other.alive || this._sameTeam(player.id, other.id)) continue;
         const dx = anchor.anchorX - other.x;
         const dz = anchor.anchorZ - other.z;
         const dist = Math.hypot(dx, dz);
@@ -1704,7 +1745,7 @@ class Game {
     const anchor = player.support;
     this.events.push({ type: 'explosion', x: anchor.anchorX, z: anchor.anchorZ });
     for (const target of this.players.values()) {
-      if (!target.alive || target.id === player.id) continue;
+      if (!target.alive || this._sameTeam(player.id, target.id)) continue;
       const dx = target.x - anchor.anchorX;
       const dz = target.z - anchor.anchorZ;
       const dist = Math.hypot(dx, dz);
@@ -1891,8 +1932,8 @@ class Game {
       if (player.isBot && player.alive) this._updateBotAI(player, now, dt);
 
       if (!player.alive) {
-        if (!player.isBot && this.mode === 'arena' && now - player.deathTime >= RESPAWN_DELAY_MS) {
-          const spawn = randomSpawn();
+        if (!player.isBot && (this.mode === 'arena' || this.mode === 'team') && now - player.deathTime >= RESPAWN_DELAY_MS) {
+          const spawn = randomSpawn(player.team);
           player.x = spawn.x;
           player.z = spawn.z;
           player.bodyRot = spawn.rotY;
@@ -2133,7 +2174,7 @@ class Game {
         }
 
         for (const target of this.players.values()) {
-          if (!target.alive || target.id === bullet.ownerId) continue;
+          if (!target.alive || this._sameTeam(bullet.ownerId, target.id)) continue;
           if (bullet.hitIds && bullet.hitIds.has(target.id)) continue; // AP: never re-hit the same target
           const t = sweepCircleHit(startX, startZ, moveDx, moveDz, target.x, target.z, TANK_RADIUS + BULLET_RADIUS);
           if (t !== null && t < bestT) {
@@ -2397,6 +2438,7 @@ class Game {
         kills: p.kills,
         deaths: p.deaths,
         color: p.color,
+        team: p.team || null,
         armorActive: p.buffs.armor.active,
         armorExpiresAt: p.buffs.armor.expiresAt,
         speedActive: p.buffs.speed.active,

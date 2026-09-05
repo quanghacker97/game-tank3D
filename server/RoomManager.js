@@ -4,12 +4,20 @@ const { Game } = require('./Game');
 const { STAGES } = require('./constants');
 
 const ARENA_ROOM_ID = 'arena';
+const TEAM_ROOM_ID = 'team';
 
 const rooms = new Map();
 rooms.set(ARENA_ROOM_ID, new Game(ARENA_ROOM_ID, 'arena', null));
+// Team Deathmatch: one persistent shared room, same lifecycle as the arena
+// room (never destroyed, everyone who picks 'team' joins this single game).
+rooms.set(TEAM_ROOM_ID, new Game(TEAM_ROOM_ID, 'team', null));
 
 function getArenaGame() {
   return rooms.get(ARENA_ROOM_ID);
+}
+
+function getTeamGame() {
+  return rooms.get(TEAM_ROOM_ID);
 }
 
 function getRoom(roomId) {
@@ -35,15 +43,17 @@ function createCampaignRoom(socketId, stageNumber, difficultyKey) {
   return { roomId, game };
 }
 
-/** Removes a non-arena room from the tick loop. No-op for the persistent arena room. */
+/** Removes a non-persistent room from the tick loop. No-op for the persistent arena/team rooms. */
 function destroyRoom(roomId) {
-  if (roomId === ARENA_ROOM_ID) return;
+  if (roomId === ARENA_ROOM_ID || roomId === TEAM_ROOM_ID) return;
   rooms.delete(roomId);
 }
 
 module.exports = {
   ARENA_ROOM_ID,
+  TEAM_ROOM_ID,
   getArenaGame,
+  getTeamGame,
   getRoom,
   allRooms,
   createCampaignRoom,

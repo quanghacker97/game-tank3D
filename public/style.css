@@ -767,6 +767,7 @@ button {
   font-weight: 700;
   font-size: 13px;
 }
+#stageResultButtons button:disabled { opacity: 0.5; cursor: default; filter: grayscale(0.4); }
 #btnStageNext, #btnStageRetry {
   background: linear-gradient(180deg, #ffb020, #e6890a);
   color: #1a1200;

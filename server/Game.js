@@ -72,6 +72,7 @@ const {
   RAPID_FIRE_MULT,
   RAPID_FIRE_DURATION_MS,
   INVULN_DURATION_MS,
+  STAGES,
 } = require('./constants');
 
 let nextBulletId = 1;
@@ -830,9 +831,23 @@ class Game {
       return;
     }
 
-    const desiredDist = 22;
-    boss.input.moveForward = dist > desiredDist * 1.2 ? 1 : dist < desiredDist * 0.6 ? -1 : 0;
-    boss.input.moveRight = 0;
+    // ROOT CAUSE of "boss attacks feel unfair": the boss used to keep
+    // repositioning every tick even WHILE a telegraph was already showing a
+    // warning at its (about-to-be-stale) position — so by the time the
+    // attack actually executed, the boss (and therefore the real damage
+    // area) had silently drifted away from wherever the warning was drawn.
+    // Freezing movement for the whole telegraph->execute window guarantees
+    // the ground position the player was warned about IS the position the
+    // attack fires from — see _updateBossAttack's capture-at-telegraph-time
+    // for the two attacks (dash/teleportStrike) that also relocate the boss.
+    if (state.attack.state === 'idle') {
+      const desiredDist = 22;
+      boss.input.moveForward = dist > desiredDist * 1.2 ? 1 : dist < desiredDist * 0.6 ? -1 : 0;
+      boss.input.moveRight = 0;
+    } else {
+      boss.input.moveForward = 0;
+      boss.input.moveRight = 0;
+    }
 
     this._updateBossAttack(boss, target, now);
   }
@@ -852,9 +867,48 @@ class Game {
       atk.state = 'telegraph';
       atk.startedAt = now;
       atk.readyAt = now + attackDef.telegraphMs;
-      atk.data = { targetX: target.x, targetZ: target.z };
+
+      // Capture EVERYTHING _executeBossAttack will need, exactly ONCE, right
+      // now — this is the fix for the "telegraph shows one spot, damage
+      // lands somewhere else" bug (section 9): dash/teleportStrike used to
+      // roll their landing point fresh at EXECUTE time, so the warning the
+      // player saw literally could not have contained that information yet.
+      // Rolling it here means the same data object feeds both the warning
+      // event below and the real damage resolution later, by construction.
+      const data = { targetX: target.x, targetZ: target.z };
+      if (chosen === 'teleportStrike') {
+        const angle = Math.random() * Math.PI * 2;
+        const r = attackDef.radius * (0.25 + Math.random() * 0.35);
+        data.landX = clamp(target.x + Math.sin(angle) * r, -ARENA_HALF_SIZE + TANK_RADIUS, ARENA_HALF_SIZE - TANK_RADIUS);
+        data.landZ = clamp(target.z + Math.cos(angle) * r, -ARENA_HALF_SIZE + TANK_RADIUS, ARENA_HALF_SIZE - TANK_RADIUS);
+      } else if (chosen === 'dash') {
+        const dx = target.x - boss.x;
+        const dz = target.z - boss.z;
+        const dist2 = Math.hypot(dx, dz) || 1;
+        const travel = Math.max(0, dist2 - attackDef.radius * 0.5);
+        data.landX = clamp(boss.x + (dx / dist2) * travel, -ARENA_HALF_SIZE + TANK_RADIUS, ARENA_HALF_SIZE - TANK_RADIUS);
+        data.landZ = clamp(boss.z + (dz / dist2) * travel, -ARENA_HALF_SIZE + TANK_RADIUS, ARENA_HALF_SIZE - TANK_RADIUS);
+      } else if (chosen === 'missileBarrage') {
+        // Homing missiles have no single fixed impact point — the target's
+        // position at telegraph time is the honest approximation of "where
+        // the barrage is inbound to" (the missiles' own visible flight then
+        // gives additional real-time dodge information beyond this marker).
+        data.landX = target.x;
+        data.landZ = target.z;
+      } else {
+        // groundSlam/laserBeam/bulletStorm all fire from the boss's own
+        // (now-frozen, see _updateBossAI) position/aim.
+        data.landX = boss.x;
+        data.landZ = boss.z;
+      }
+      atk.data = data;
+
+      const aimAngle = Math.atan2(data.targetX - boss.x, data.targetZ - boss.z);
       // The client-visible warning (section 31) — MUST fire before any
-      // damage from this attack ever can (readAt is still in the future).
+      // damage from this attack ever can (readyAt is still in the future) —
+      // and carries the attack's REAL shape (radius/width/range/count) read
+      // from the exact same BOSS_ATTACKS entry _executeBossAttack uses, so
+      // the indicator can never visually disagree with the actual hitbox.
       this.events.push({
         type: 'bossTelegraph',
         bossId: boss.id,
@@ -862,8 +916,17 @@ class Game {
         telegraphMs: attackDef.telegraphMs,
         x: boss.x,
         z: boss.z,
-        targetX: target.x,
-        targetZ: target.z,
+        targetX: data.targetX,
+        targetZ: data.targetZ,
+        landX: data.landX,
+        landZ: data.landZ,
+        dirX: Math.sin(aimAngle),
+        dirZ: Math.cos(aimAngle),
+        radius: attackDef.radius || 0,
+        width: attackDef.width || 0,
+        range: attackDef.range || 0,
+        count: attackDef.count || 0,
+        warnRadius: attackDef.warnRadius || attackDef.radius || 0,
       });
     } else if (atk.state === 'telegraph' && now >= atk.readyAt) {
       this._executeBossAttack(boss, target, atk, now);
@@ -915,15 +978,13 @@ class Game {
         break;
       }
       case 'dash': {
-        // Stop WELL inside the blast's own radius of the target — stopping
-        // at/beyond the radius (as `radius*1.2` previously did) would make
-        // the charge whiff the very target it just closed distance on.
-        const dx = target.x - boss.x;
-        const dz = target.z - boss.z;
-        const dist = Math.hypot(dx, dz) || 1;
-        const travel = Math.max(0, dist - def.radius * 0.5);
-        boss.x = clamp(boss.x + (dx / dist) * travel, -ARENA_HALF_SIZE + TANK_RADIUS, ARENA_HALF_SIZE - TANK_RADIUS);
-        boss.z = clamp(boss.z + (dz / dist) * travel, -ARENA_HALF_SIZE + TANK_RADIUS, ARENA_HALF_SIZE - TANK_RADIUS);
+        // Land at the EXACT point captured at telegraph time (see
+        // _updateBossAttack) — recomputing from the target's CURRENT
+        // position here (as this used to do) would silently home in on
+        // wherever the player moved to, making "dodge by moving away"
+        // impossible even though the warning told them a fixed spot.
+        boss.x = atk.data.landX;
+        boss.z = atk.data.landZ;
         this._bossAreaDamage(boss, boss.x, boss.z, def.radius, boss.stats.damage * def.damageMult, 4, now);
         break;
       }
@@ -935,13 +996,12 @@ class Game {
         break;
       }
       case 'teleportStrike': {
-        // Land WELL inside the blast's own radius of the target — landing
-        // near the outer edge (or beyond it) would make a "relocate and
-        // strike" attack frequently whiff the very target it's aimed at.
-        const angle = Math.random() * Math.PI * 2;
-        const r = def.radius * (0.25 + Math.random() * 0.35);
-        boss.x = clamp(target.x + Math.sin(angle) * r, -ARENA_HALF_SIZE + TANK_RADIUS, ARENA_HALF_SIZE - TANK_RADIUS);
-        boss.z = clamp(target.z + Math.cos(angle) * r, -ARENA_HALF_SIZE + TANK_RADIUS, ARENA_HALF_SIZE - TANK_RADIUS);
+        // Land at the EXACT point rolled at telegraph time (see
+        // _updateBossAttack) — rolling it fresh here (as this used to do)
+        // meant the warning event literally could not have known where the
+        // boss would reappear, making the attack undodgeable by definition.
+        boss.x = atk.data.landX;
+        boss.z = atk.data.landZ;
         this._bossAreaDamage(boss, boss.x, boss.z, def.radius, boss.stats.damage * def.damageMult, 3, now);
         break;
       }
@@ -2392,6 +2452,14 @@ class Game {
       stageId: this.stageDef.id,
       stageName: this.stageDef.name,
       chapter: this.chapter,
+      // Server-computed "what comes next" (bug-fix: the client used to do
+      // its own `stageId + 1` arithmetic — that math was never actually
+      // wrong in this flat-integer id scheme, but having the CLIENT derive
+      // progression at all is exactly the kind of "two systems computing
+      // the same thing independently" section 27 warns can drift out of
+      // sync; null once this is genuinely the last stage in the campaign.
+      nextStageId: this.stageDef.id < STAGES.length ? this.stageDef.id + 1 : null,
+      isLastStage: this.stageDef.id >= STAGES.length,
       enemiesRemaining,
       finished: this.finished,
       cleared: this.stageCleared,

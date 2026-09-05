@@ -353,14 +353,18 @@ function clampChapter(c) {
 // telegraphMs warning window BEFORE it executes (section 31) so it's
 // always avoidable if the player reacts.
 // ---------------------------------------------------------------------
+// telegraphMs floors (section 4's suggested reaction windows): >=800ms for
+// a normal attack, >=1200ms for a strong one. `dash` (700) and
+// `bulletStorm` (800, right at the floor) were bumped up — a charge that
+// also repositions the boss needs more warning than a stationary attack.
 const BOSS_ATTACKS = {
-  missileBarrage: { label: 'Mưa Tên Lửa', telegraphMs: 900, cooldownMs: 6200, count: 5, damageMult: 0.6 },
+  missileBarrage: { label: 'Mưa Tên Lửa', telegraphMs: 900, cooldownMs: 6200, count: 5, damageMult: 0.6, warnRadius: 5 },
   laserBeam: { label: 'Tia Laser', telegraphMs: 1500, cooldownMs: 7500, damageMult: 2.0, width: 2.4, range: 60 },
   groundSlam: { label: 'Đập Đất', telegraphMs: 1100, cooldownMs: 6500, radius: 15, damageMult: 1.3, knockback: 9 },
   summon: { label: 'Triệu Hồi', telegraphMs: 1000, cooldownMs: 13000, count: 2 },
-  dash: { label: 'Lao Thẳng', telegraphMs: 700, cooldownMs: 5500, damageMult: 1.5, radius: 4.5 },
-  bulletStorm: { label: 'Bão Đạn', telegraphMs: 800, cooldownMs: 7500, count: 14, damageMult: 0.32 },
-  teleportStrike: { label: 'Dịch Chuyển Tấn Công', telegraphMs: 900, cooldownMs: 9000, damageMult: 1.6, radius: 6 },
+  dash: { label: 'Lao Thẳng', telegraphMs: 1000, cooldownMs: 5500, damageMult: 1.5, radius: 4.5 },
+  bulletStorm: { label: 'Bão Đạn', telegraphMs: 950, cooldownMs: 7500, count: 14, damageMult: 0.32, warnRadius: 20 },
+  teleportStrike: { label: 'Dịch Chuyển Tấn Công', telegraphMs: 1100, cooldownMs: 9000, damageMult: 1.6, radius: 6 },
 };
 
 const BOSS_PHASE_THRESHOLDS = [0.75, 0.5, 0.25]; // HP% at which the boss advances a phase

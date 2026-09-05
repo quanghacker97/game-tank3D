@@ -1265,9 +1265,12 @@ function spawnLaserBeamVisual(ev) {
   );
 }
 
-// Boss attack telegraph (section 31): a plain floating warning label
-// tracking the boss's live screen position for the duration of the
-// telegraph window — always shown BEFORE the attack can deal any damage.
+// Boss attack telegraph (bug-fix sections 1-11): a floating warning label
+// PLUS an actual ground-projected shape (circle or beam) sized/positioned
+// from the exact same radius/width/range/landX/landZ numbers the server
+// will use to resolve real damage (see the `bossTelegraph` event built in
+// Game.js#_updateBossAttack) — the indicator can never visually disagree
+// with the real hitbox because both read the same source values.
 const BOSS_ATTACK_LABELS = {
   missileBarrage: '⚠ MƯA TÊN LỬA!',
   laserBeam: '⚠ LASER SẮP BẮN!',
@@ -1277,20 +1280,131 @@ const BOSS_ATTACK_LABELS = {
   bulletStorm: '⚠ BÃO ĐẠN!',
   teleportStrike: '⚠ DỊCH CHUYỂN TẤN CÔNG!',
 };
-let bossTelegraphActive = null; // { bossId, hideAt }
+// Which ground-indicator shape each attack needs — 'circle' for anything
+// with a landing point + radius, 'beam' for the laser's line/rectangle,
+// 'none' for non-damaging attacks (summon) that don't need a dodge cue.
+const BOSS_ATTACK_SHAPE = {
+  missileBarrage: 'circle',
+  laserBeam: 'beam',
+  groundSlam: 'circle',
+  summon: 'none',
+  dash: 'circle',
+  bulletStorm: 'circle',
+  teleportStrike: 'circle',
+};
+
+let bossTelegraphZoneMesh = null; // lazily-built circular AoE indicator (disc + outer ring + shrinking countdown ring)
+let bossTelegraphBeamMesh = null; // lazily-built rectangular laser-line indicator
+
+function ensureBossTelegraphZoneMesh() {
+  if (bossTelegraphZoneMesh) return bossTelegraphZoneMesh;
+  const group = new THREE.Group();
+  const discMat = new THREE.MeshBasicMaterial({ color: 0xff2d2d, transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false });
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 32), discMat);
+  disc.rotation.x = -Math.PI / 2;
+  disc.position.y = 0.06;
+  group.add(disc);
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0xff4444, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 40), ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.09;
+  group.add(ring);
+  // Shrinking countdown ring (section 10): starts at the same radius as the
+  // outer ring and animates down to nothing over the telegraph's lifetime —
+  // an unambiguous "time left" cue layered on top of the plain pulse below.
+  const countdownMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthWrite: false });
+  const countdown = new THREE.Mesh(new THREE.RingGeometry(0.9, 1, 40), countdownMat);
+  countdown.rotation.x = -Math.PI / 2;
+  countdown.position.y = 0.12;
+  group.add(countdown);
+  group.visible = false;
+  scene.add(group);
+  bossTelegraphZoneMesh = { group, disc, ring, countdown };
+  return bossTelegraphZoneMesh;
+}
+
+function ensureBossTelegraphBeamMesh() {
+  if (bossTelegraphBeamMesh) return bossTelegraphBeamMesh;
+  const mat = new THREE.MeshBasicMaterial({ color: 0xff5c3d, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false });
+  // A thin flat box (length along local Z, width along local X, negligible
+  // height) instead of a rotated plane — a box's default axes need only a
+  // single Y-axis yaw to point along an arbitrary ground direction, which
+  // avoids fighting Euler rotation-order ambiguity for a rotated plane.
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 0.06, 1), mat);
+  mesh.visible = false;
+  scene.add(mesh);
+  bossTelegraphBeamMesh = { mesh };
+  return bossTelegraphBeamMesh;
+}
+
+let activeBossTelegraph = null; // { ev, startedAt, hideAt }
+
 function spawnBossTelegraph(ev) {
   bossTelegraphEl.textContent = BOSS_ATTACK_LABELS[ev.attack] || '⚠ CẢNH BÁO!';
   Sound.bossTelegraphTick();
-  bossTelegraphActive = { bossId: ev.bossId, hideAt: performance.now() + ev.telegraphMs };
+  const startedAt = performance.now();
+  activeBossTelegraph = { ev, startedAt, hideAt: startedAt + ev.telegraphMs };
+
+  const shape = BOSS_ATTACK_SHAPE[ev.attack] || 'none';
+  if (shape === 'circle') {
+    const zone = ensureBossTelegraphZoneMesh();
+    const radius = Math.max(1.5, ev.warnRadius || ev.radius || 4);
+    zone.group.position.set(ev.landX, 0, ev.landZ);
+    zone.group.scale.set(radius, 1, radius);
+    zone.group.visible = true;
+    if (bossTelegraphBeamMesh) bossTelegraphBeamMesh.mesh.visible = false;
+  } else if (shape === 'beam') {
+    const beam = ensureBossTelegraphBeamMesh();
+    const range = Math.max(4, ev.range || 40);
+    const width = Math.max(1, (ev.width || 2) * 2);
+    beam.mesh.geometry.dispose();
+    beam.mesh.geometry = new THREE.BoxGeometry(width, 0.06, range);
+    const angle = Math.atan2(ev.dirX, ev.dirZ);
+    beam.mesh.rotation.y = angle;
+    beam.mesh.position.set(ev.x + ev.dirX * range * 0.5, 0.07, ev.z + ev.dirZ * range * 0.5);
+    beam.mesh.visible = true;
+    if (bossTelegraphZoneMesh) bossTelegraphZoneMesh.group.visible = false;
+  } else {
+    if (bossTelegraphZoneMesh) bossTelegraphZoneMesh.group.visible = false;
+    if (bossTelegraphBeamMesh) bossTelegraphBeamMesh.mesh.visible = false;
+  }
 }
+
+function hideBossTelegraphShapes() {
+  if (bossTelegraphZoneMesh) bossTelegraphZoneMesh.group.visible = false;
+  if (bossTelegraphBeamMesh) bossTelegraphBeamMesh.mesh.visible = false;
+}
+
 function updateBossTelegraphVisual() {
-  if (!bossTelegraphActive) return;
-  if (performance.now() >= bossTelegraphActive.hideAt) {
-    bossTelegraphActive = null;
+  if (!activeBossTelegraph) return;
+  const now = performance.now();
+
+  if (now >= activeBossTelegraph.hideAt) {
+    activeBossTelegraph = null;
+    hideBossTelegraphShapes();
     bossTelegraphEl.classList.add('hidden');
     return;
   }
-  const e = entities.get(bossTelegraphActive.bossId);
+
+  const t = clamp((now - activeBossTelegraph.startedAt) / activeBossTelegraph.ev.telegraphMs, 0, 1);
+  if (bossTelegraphZoneMesh && bossTelegraphZoneMesh.group.visible) {
+    // Intensifies (brighter, faster pulse) as execution approaches, and the
+    // countdown ring visibly shrinks toward the center — both driven by the
+    // SAME `t` so "how much time is left" is always legible at a glance,
+    // not just a static warning that vanishes without notice (section 10).
+    const pulse = 0.55 + Math.sin(now / (140 - t * 90)) * 0.25 + t * 0.2;
+    bossTelegraphZoneMesh.disc.material.opacity = Math.min(0.55, 0.18 + t * 0.3) * pulse;
+    bossTelegraphZoneMesh.ring.material.opacity = Math.min(1, 0.7 + t * 0.3);
+    const remaining = Math.max(0.02, 1 - t);
+    bossTelegraphZoneMesh.countdown.scale.set(remaining, remaining, 1);
+  } else if (bossTelegraphBeamMesh && bossTelegraphBeamMesh.mesh.visible) {
+    bossTelegraphBeamMesh.mesh.material.opacity = 0.15 + t * 0.55;
+  }
+
+  // Floating text label, tracking the boss's LIVE screen position (the
+  // boss itself is frozen server-side during the telegraph, so this stays
+  // pinned right above the ground indicator rather than drifting from it).
+  const e = entities.get(activeBossTelegraph.ev.bossId);
   if (!e) {
     bossTelegraphEl.classList.add('hidden');
     return;
@@ -1519,7 +1633,8 @@ function resetGameState() {
   objectiveRowEl.classList.add('hidden');
   staminaWrapEl.classList.add('hidden');
   bossTelegraphEl.classList.add('hidden');
-  bossTelegraphActive = null;
+  activeBossTelegraph = null;
+  hideBossTelegraphShapes();
   lastHudObjectiveKey = null;
   lastHudBossId = null;
   lastHudBossHpPct = null;
@@ -1700,16 +1815,33 @@ function startCampaign(stageId) {
   joinGame({ mode: 'campaign', stage: stageId });
 }
 
+// One-shot guard for any stage transition (bug-fix section 20-26): every
+// path that leaves the current room and either returns to the menu or
+// rejoins a new campaign room goes through here first. Spamming the
+// Confirm/Next/Retry/Menu buttons — or any duplicate call arriving from
+// elsewhere — is a no-op while a transition is already in flight, so a
+// transition can only ever be started once. Released either immediately
+// (going to the menu has nothing further to wait for) or by the 'init'
+// handler once the NEW room's first snapshot has actually arrived — see
+// below — so the window it covers is the entire "clicked but not yet in
+// the new room" gap, not just the synchronous call itself.
+let stageTransitionInFlight = false;
+
 function leaveRoomAndGoMenu() {
+  if (stageTransitionInFlight) return;
+  stageTransitionInFlight = true;
   socket.emit('leaveRoom');
   resetGameState();
   hud.classList.remove('active');
   refreshMenuTexts();
   renderStages();
   showPanel('menu');
+  stageTransitionInFlight = false;
 }
 
 function leaveAndRejoinCampaign(stageId) {
+  if (stageTransitionInFlight) return;
+  stageTransitionInFlight = true;
   socket.emit('leaveRoom');
   resetGameState();
   startCampaign(stageId);
@@ -1764,9 +1896,31 @@ garageBackEl.addEventListener('click', () => {
 });
 
 menuLeaveBtnEl.addEventListener('click', leaveRoomAndGoMenu);
-btnStageMenuEl.addEventListener('click', leaveRoomAndGoMenu);
-btnStageRetryEl.addEventListener('click', () => leaveAndRejoinCampaign(latestStageStatus.stageId));
-btnStageNextEl.addEventListener('click', () => leaveAndRejoinCampaign(latestStageStatus.stageId + 1));
+
+// Every stage-result button disables the whole trio the instant it's
+// clicked (section 24) — a double-click or spam-click physically cannot
+// fire a second transition, on top of the stageTransitionInFlight guard
+// inside leaveRoomAndGoMenu/leaveAndRejoinCampaign themselves.
+function disableStageResultButtons() {
+  btnStageNextEl.disabled = true;
+  btnStageRetryEl.disabled = true;
+  btnStageMenuEl.disabled = true;
+}
+btnStageMenuEl.addEventListener('click', () => {
+  disableStageResultButtons();
+  leaveRoomAndGoMenu();
+});
+btnStageRetryEl.addEventListener('click', () => {
+  disableStageResultButtons();
+  leaveAndRejoinCampaign(latestStageStatus.stageId);
+});
+// Uses the SERVER's own `nextStageId` (see Game.js#getStageStatus) instead
+// of the client re-deriving "+1" itself — one authoritative place computes
+// stage progression, per section 27, so the two can never disagree.
+btnStageNextEl.addEventListener('click', () => {
+  disableStageResultButtons();
+  leaveAndRejoinCampaign(latestStageStatus.nextStageId);
+});
 
 function refreshMuteBtn() {
   muteBtnEl.textContent = Sound.isMuted() ? '🔇' : '🔊';
@@ -1795,6 +1949,7 @@ socket.on('joinError', (err) => {
   hud.classList.remove('active');
   refreshMenuTexts();
   showPanel('menu');
+  stageTransitionInFlight = false; // the attempted transition failed -- release the guard so the player can retry
 });
 
 // ---------- Game state sync ----------
@@ -1916,6 +2071,9 @@ socket.on('init', (data) => {
   campaignBarEl.classList.toggle('hidden', mode !== 'campaign');
   loginOverlay.classList.add('hidden');
   hud.classList.add('active');
+  // The new room's first snapshot has genuinely arrived -- only NOW is a
+  // rejoin transition (see leaveAndRejoinCampaign) considered finished.
+  stageTransitionInFlight = false;
 });
 
 socket.on('playerJoined', (p) => {
@@ -2081,16 +2239,25 @@ function showStageResult(status) {
   stageResultShown = true;
   if (document.pointerLockElement === canvas) document.exitPointerLock();
 
+  // A fresh modal instance for THIS stage — re-enable the buttons in case a
+  // previous stage's confirm click left them disabled (section 25: don't
+  // let a stale disabled state leak into the next time the modal opens).
+  btnStageNextEl.disabled = false;
+  btnStageRetryEl.disabled = false;
+  btnStageMenuEl.disabled = false;
+
   if (status.cleared) {
     profile.currency += status.reward;
-    profile.unlockedStage = Math.min(
-      STAGES_META.length || status.stageId + 1,
-      Math.max(profile.unlockedStage, status.stageId + 1)
-    );
+    // Bug-fix (section 15-19): unlockedStage now tracks the SERVER's own
+    // `nextStageId` (see Game.js#getStageStatus) instead of the client
+    // re-deriving `stageId + 1` against a possibly-stale STAGES_META.length
+    // — one authoritative computation of "what comes next", so it can never
+    // disagree with what the Next-stage button itself will request.
+    profile.unlockedStage = Math.max(profile.unlockedStage, status.nextStageId || status.stageId);
     saveProfile();
     stageResultTitleEl.textContent = '🎉 Hoàn thành!';
     stageResultSubEl.textContent = `${status.stageName} — Nhận +${status.reward} Xu`;
-    btnStageNextEl.classList.toggle('hidden', !STAGES_META.length || status.stageId >= STAGES_META.length);
+    btnStageNextEl.classList.toggle('hidden', status.isLastStage || !status.nextStageId);
     renderPerkPick();
     Sound.stageClear();
   } else {

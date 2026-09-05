@@ -7,14 +7,11 @@ const TANK_VISUAL_SCALE = 0.4;
 const RESPAWN_DELAY_MS = 3000;
 const MOUSE_SENSITIVITY = 0.0022;
 const TOUCH_LOOK_SENSITIVITY = 0.0026;
-const AIM_SENS_MULT = 0.55; // mouse sensitivity multiplier while RMB-aiming (precision, not direction)
 const JOYSTICK_RADIUS = 48; // px, matches #touchJoystickBase knob travel
 const CAM_DIST = 11;
 const CAM_BASE_HEIGHT = 3;
 const BASE_FOV = 65;
-const AIM_FOV = 40; // camera FOV while RMB held (zoom-in feel)
-const AIM_ZOOM_SPEED = 6; // higher = snappier FOV transition, still eased not instant
-const LOCK_TURN_RATE = 3.0; // rad/sec turret tracking speed while target-locked
+const LOCK_TURN_RATE = 3.0; // rad/sec turret assist-tracking speed while target-locked
 const LOCK_MAX_RANGE = 90;
 const LOCK_MAX_ANGLE = 0.3; // rad (~17deg) cone around the aim direction for LMB+RMB target acquisition
 
@@ -819,7 +816,6 @@ let latestPickupData = [];
 let localDeathStart = 0;
 let lastLowHpBeep = 0;
 let lockedTargetId = null;
-let comboLockOwned = false; // true when the current lock was acquired via LMB+RMB (vs Tab/touch-button)
 
 function angleDiff(a, b) {
   let diff = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
@@ -902,7 +898,6 @@ function resetGameState() {
   combatNumbers.length = 0;
   selfId = null;
   lockedTargetId = null;
-  comboLockOwned = false;
   stageResultShown = false;
   latestStageStatus = null;
   stageResultOverlayEl.classList.add('hidden');
@@ -1275,7 +1270,8 @@ const camPitch = 0.3;
 let firing = false;
 let pointerLocked = false;
 let lmbDown = false;
-let rmbDown = false; // RMB held = aim/zoom mode
+let rmbDown = false; // RMB held = other half of the LMB+RMB target-lock chord — no zoom/ADS tied to it
+let comboArmed = false; // true once the current LMB+RMB press has already triggered a lock attempt
 const joystickVec = { x: 0, y: 0 }; // x = strafe right, y = forward, both -1..1
 
 window.addEventListener('keydown', (e) => {
@@ -1306,10 +1302,9 @@ if (!isTouchDevice) {
       firing = false;
       lmbDown = false;
       rmbDown = false;
-      if (comboLockOwned) {
-        lockedTargetId = null;
-        comboLockOwned = false;
-      }
+      // Losing pointer lock does NOT clear an active target lock — the lock
+      // persists independent of button state (see updateComboLock) and is
+      // only released by the conditions in updateAimLock/tryToggleLock.
     }
     // While the pointer is locked, ALL mouse events (per spec) are routed to
     // the locked element, so a real click on this button would never arrive —
@@ -1326,10 +1321,11 @@ if (!isTouchDevice) {
     // (fx=sin(yaw), fz=cos(yaw)), increasing yaw turns the tank toward its
     // own LEFT, so movementX (mouse right = positive) must SUBTRACT from
     // yaw for "mouse right" to turn the tank/camera right on screen.
-    if (!lockedTargetId) {
-      const sens = MOUSE_SENSITIVITY * (rmbDown ? AIM_SENS_MULT : 1);
-      turretYaw -= e.movementX * sens;
-    }
+    // Mouse always drives aim, even while a target is locked (see
+    // updateAimLock) — target lock is a soft assist layered on top each
+    // frame, not a hard override, so the player can freely look elsewhere
+    // (e.g. to pick a new target) without the mouse ever being frozen.
+    turretYaw -= e.movementX * MOUSE_SENSITIVITY;
   });
 
   canvas.addEventListener('mousedown', (e) => {
@@ -1443,7 +1439,8 @@ function setupTouchControls() {
         lookLastX = t.clientX;
         // Sign negated to match the mouse fix above — see the comment on
         // the mousemove handler for why "+movementX" turns the tank left.
-        if (!lockedTargetId) turretYaw -= dx * TOUCH_LOOK_SENSITIVITY;
+        // Always active, even while locked — see the mousemove handler comment.
+        turretYaw -= dx * TOUCH_LOOK_SENSITIVITY;
       }
       e.preventDefault();
     },
@@ -1489,7 +1486,6 @@ setupTouchControls();
 function tryToggleLock() {
   if (lockedTargetId) {
     lockedTargetId = null;
-    comboLockOwned = false;
     return;
   }
   const self = entities.get(selfId);
@@ -1547,6 +1543,10 @@ function hasLineOfSight(x1, z1, x2, z2) {
 // lock-on cone/range — reuses the same lockedTargetId/updateAimLock system
 // as the Tab/touch quick-lock so tracking, release-on-invalid, and HUD stay
 // unified across both ways of acquiring a lock.
+// Angle-from-tank (not a camera screen-space raycast) is deliberate: the
+// tank's shooting direction is turretYaw regardless of where the chase-cam
+// sits, so bore-sighting off turretYaw is what actually predicts which
+// enemy the shot will hit — a camera raycast could disagree with it.
 function pickCrosshairTarget() {
   const self = entities.get(selfId);
   if (!self || !self.alive) return null;
@@ -1567,23 +1567,24 @@ function pickCrosshairTarget() {
   return best;
 }
 
-// Called every frame: while both LMB+RMB are held, keep trying to acquire a
-// crosshair target (so swinging the aim onto an enemy locks on without a
-// fresh click); releases the lock the moment either button lets go, but only
-// if this combo — not Tab/touch — is the one that owns the current lock.
+// LMB+RMB target-lock activation: a one-shot TOGGLE, not a hold. The chord
+// is detected as an edge — the frame both buttons first become simultaneously
+// down — so pressing them in either order fires exactly one acquisition
+// attempt, no matter how long the chord is then held. The lock this produces
+// does NOT depend on the buttons staying down: release both immediately and
+// the target stays locked (see updateAimLock, which is the only place a lock
+// is cleared, aside from manual unlock via tryToggleLock).
+// Pressing the chord again while a target is already locked re-picks under
+// the crosshair and, if a different valid enemy is found, switches the lock
+// to it; if nothing valid is under the crosshair, the current lock is left
+// untouched rather than being cleared.
 function updateComboLock() {
-  if (lmbDown && rmbDown) {
-    if (!lockedTargetId) {
-      const target = pickCrosshairTarget();
-      if (target !== null) {
-        lockedTargetId = target;
-        comboLockOwned = true;
-      }
-    }
-  } else if (comboLockOwned) {
-    lockedTargetId = null;
-    comboLockOwned = false;
+  const comboDown = lmbDown && rmbDown;
+  if (comboDown && !comboArmed) {
+    const target = pickCrosshairTarget();
+    if (target !== null) lockedTargetId = target;
   }
+  comboArmed = comboDown;
 }
 
 function updateAimLock(dt) {
@@ -1592,7 +1593,6 @@ function updateAimLock(dt) {
   const self = entities.get(selfId);
   if (!target || !target.alive || !self) {
     lockedTargetId = null;
-    comboLockOwned = false;
     return;
   }
   const dx = target.render.x - self.render.x;
@@ -1600,9 +1600,15 @@ function updateAimLock(dt) {
   const dist = Math.hypot(dx, dz);
   if (dist > LOCK_MAX_RANGE || !hasLineOfSight(self.render.x, self.render.z, target.render.x, target.render.z)) {
     lockedTargetId = null;
-    comboLockOwned = false;
     return;
   }
+  // Soft assist, not a hard override: this nudges turretYaw toward the
+  // target at a capped rate every frame, on top of whatever the mouse/touch
+  // handlers already applied this frame. A deliberate manual turn (e.g. to
+  // look at a different enemy before re-locking) easily outpaces this small
+  // per-frame correction, so it never fights or overrides manual aim — it
+  // just keeps the shot centered on the target when the player isn't
+  // actively turning away from it.
   const desired = Math.atan2(dx, dz);
   turretYaw = angleLerpCapped(turretYaw, desired, LOCK_TURN_RATE * dt);
 }
@@ -1840,9 +1846,13 @@ function updatePickups(dt, tSec) {
   }
 }
 
-let aimZoomT = 0; // eased 0..1, 0 = normal view, 1 = fully RMB-zoomed
-
-function updateCamera(dt) {
+// Camera zoom/ADS is intentionally not implemented here — the previous
+// RMB-driven FOV zoom was inaccurate and has been removed rather than wired
+// up to target-lock. Target lock must never change FOV/camera distance, so
+// camera.fov simply stays at its BASE_FOV init value. A proper zoom/ADS
+// system, if added later, should stay a fully separate control from
+// target-lock (see updateComboLock/updateAimLock).
+function updateCamera() {
   const self = entities.get(selfId);
   if (!self) return;
   const yaw = self.render.turretRot;
@@ -1856,16 +1866,6 @@ function updateCamera(dt) {
 
   camera.position.set(camX, camY + 2, camZ);
   camera.lookAt(targetX, targetY + 0.48, targetZ);
-
-  // Smoothly ease the FOV toward the RMB-aim target instead of snapping, so
-  // entering/leaving zoom never jitters or pops.
-  const zoomTarget = rmbDown ? 1 : 0;
-  aimZoomT += (zoomTarget - aimZoomT) * Math.min(1, AIM_ZOOM_SPEED * dt);
-  const fov = BASE_FOV + (AIM_FOV - BASE_FOV) * aimZoomT;
-  if (Math.abs(camera.fov - fov) > 0.01) {
-    camera.fov = fov;
-    camera.updateProjectionMatrix();
-  }
 }
 
 function updateHud() {
@@ -2006,7 +2006,7 @@ function animate() {
     updatePickups(dt, now / 1000);
     updateBursts(dt);
     updateCombatNumbers(dt);
-    updateCamera(dt);
+    updateCamera();
     updateHud();
     updateLockUI();
     updateMinimap();

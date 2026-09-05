@@ -285,13 +285,18 @@ function statsFromBotTier(tierName, roleName, chapter, difficultyKey) {
   const hpMult = scale.hpMult * (role.hpMult || 1) * diff.hpMult;
   const dmgMult = scale.dmgMult * (role.dmgMult || 1) * diff.dmgMult;
   const speedMult = scale.speedMult * (role.moveMult || 1) * diff.speedMult;
+  // Bug-fix: `aggroMult` was defined on DIFFICULTIES but never actually
+  // read anywhere — bots were exactly as "aggressive" on Nightmare as on
+  // Normal. Applied the same way `role.fireMult`/`role.engageMult` already
+  // are: higher aggression means engaging from farther away AND firing
+  // more often, on top of whatever the role/chapter already set.
   return {
     damage: tier.damage * dmgMult,
     maxHp: Math.round(tier.maxHp * hpMult),
     moveSpeed: tier.moveSpeed * speedMult,
     turnSpeed: tier.turnSpeed * scale.turnSpeedMult,
-    fireCooldown: tier.fireCooldown / Math.max(0.2, role.fireMult != null ? role.fireMult : 1),
-    engageRange: tier.engageRange * (role.engageMult != null ? role.engageMult : 1),
+    fireCooldown: tier.fireCooldown / Math.max(0.2, (role.fireMult != null ? role.fireMult : 1) * diff.aggroMult),
+    engageRange: tier.engageRange * (role.engageMult != null ? role.engageMult : 1) * diff.aggroMult,
   };
 }
 
@@ -2358,12 +2363,19 @@ class Game {
     this.waveIndex = idx;
     this.waveBreatherUntil = now + 3500; // short breathing room before the NEXT wave (section 23)
     const isHunt = this.objective && this.objective.type === 'hunt';
+    // Bug-fix: `eliteChanceMult` was defined on DIFFICULTIES but never
+    // actually read anywhere — Nightmare rolled elites at the exact same
+    // rate as Normal despite the label promising otherwise. The base
+    // eliteChance is baked once per-chapter at stage-generation time
+    // (constants.js has no notion of difficulty yet), so the difficulty
+    // multiplier has to apply here, at ROLL time, instead.
+    const diffMult = (DIFFICULTIES[this.difficulty] || DIFFICULTIES.normal).eliteChanceMult;
     for (const spec of wave) {
       let isElite = false;
       if (isHunt) {
         if (!this.huntTargetId) isElite = true; // exactly one guaranteed elite for the whole stage
       } else {
-        isElite = Math.random() < (this.stageDef.eliteChance || 0);
+        isElite = Math.random() < clamp((this.stageDef.eliteChance || 0) * diffMult, 0, 0.9);
       }
       const bot = this.addBot(spec.tier, { role: spec.role, chapter: this.chapter, difficulty: this.difficulty, isElite });
       if (isHunt && isElite && !this.huntTargetId) this.huntTargetId = bot.id;

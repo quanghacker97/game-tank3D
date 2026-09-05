@@ -7,11 +7,16 @@ const TANK_VISUAL_SCALE = 0.4;
 const RESPAWN_DELAY_MS = 3000;
 const MOUSE_SENSITIVITY = 0.0022;
 const TOUCH_LOOK_SENSITIVITY = 0.0026;
+const AIM_SENS_MULT = 0.55; // mouse sensitivity multiplier while RMB-aiming (precision, not direction)
 const JOYSTICK_RADIUS = 48; // px, matches #touchJoystickBase knob travel
 const CAM_DIST = 11;
 const CAM_BASE_HEIGHT = 3;
+const BASE_FOV = 65;
+const AIM_FOV = 40; // camera FOV while RMB held (zoom-in feel)
+const AIM_ZOOM_SPEED = 6; // higher = snappier FOV transition, still eased not instant
 const LOCK_TURN_RATE = 3.0; // rad/sec turret tracking speed while target-locked
 const LOCK_MAX_RANGE = 90;
+const LOCK_MAX_ANGLE = 0.3; // rad (~17deg) cone around the aim direction for LMB+RMB target acquisition
 
 const MAX_UPGRADE_LEVEL = 5;
 const UPGRADES = {
@@ -407,7 +412,7 @@ function createSkyTexture() {
 scene.background = createSkyTexture();
 scene.fog = new THREE.Fog(0xcfe6f5, 70, 165);
 
-const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 500);
+const camera = new THREE.PerspectiveCamera(BASE_FOV, window.innerWidth / window.innerHeight, 0.1, 500);
 camera.position.set(0, 20, 20);
 
 window.addEventListener('resize', () => {
@@ -813,17 +818,20 @@ let latestPickupData = [];
 let localDeathStart = 0;
 let lastLowHpBeep = 0;
 let lockedTargetId = null;
+let comboLockOwned = false; // true when the current lock was acquired via LMB+RMB (vs Tab/touch-button)
 
-function angleLerp(a, b, t) {
+function angleDiff(a, b) {
   let diff = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
   if (diff < -Math.PI) diff += Math.PI * 2;
-  return a + diff * t;
+  return diff;
+}
+
+function angleLerp(a, b, t) {
+  return a + angleDiff(a, b) * t;
 }
 
 function angleLerpCapped(a, b, maxStep) {
-  let diff = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
-  if (diff < -Math.PI) diff += Math.PI * 2;
-  const clamped = Math.max(-maxStep, Math.min(maxStep, diff));
+  const clamped = Math.max(-maxStep, Math.min(maxStep, angleDiff(a, b)));
   return a + clamped;
 }
 
@@ -893,6 +901,7 @@ function resetGameState() {
   combatNumbers.length = 0;
   selfId = null;
   lockedTargetId = null;
+  comboLockOwned = false;
   stageResultShown = false;
   latestStageStatus = null;
   stageResultOverlayEl.classList.add('hidden');
@@ -900,6 +909,8 @@ function resetGameState() {
   killfeedEl.innerHTML = '';
   keys.clear();
   firing = false;
+  lmbDown = false;
+  rmbDown = false;
   if (document.pointerLockElement === canvas) document.exitPointerLock();
   Sound.stopEngine();
 }
@@ -1262,6 +1273,8 @@ let turretYaw = 0;
 const camPitch = 0.3;
 let firing = false;
 let pointerLocked = false;
+let lmbDown = false;
+let rmbDown = false; // RMB held = aim/zoom mode
 const joystickVec = { x: 0, y: 0 }; // x = strafe right, y = forward, both -1..1
 
 window.addEventListener('keydown', (e) => {
@@ -1288,7 +1301,15 @@ if (!isTouchDevice) {
 
   document.addEventListener('pointerlockchange', () => {
     pointerLocked = document.pointerLockElement === canvas;
-    if (!pointerLocked) firing = false;
+    if (!pointerLocked) {
+      firing = false;
+      lmbDown = false;
+      rmbDown = false;
+      if (comboLockOwned) {
+        lockedTargetId = null;
+        comboLockOwned = false;
+      }
+    }
     // While the pointer is locked, ALL mouse events (per spec) are routed to
     // the locked element, so a real click on this button would never arrive —
     // hide it during aiming and reveal it once Esc releases the lock.
@@ -1300,15 +1321,35 @@ if (!isTouchDevice) {
     if (!pointerLocked) return;
     // Yaw only — camPitch is fixed (see its declaration) so aiming is a
     // single left/right axis, not a free-look that's easy to lose control of.
-    if (!lockedTargetId) turretYaw += e.movementX * MOUSE_SENSITIVITY;
+    // Sign is negated: with this game's forward-vector convention
+    // (fx=sin(yaw), fz=cos(yaw)), increasing yaw turns the tank toward its
+    // own LEFT, so movementX (mouse right = positive) must SUBTRACT from
+    // yaw for "mouse right" to turn the tank/camera right on screen.
+    if (!lockedTargetId) {
+      const sens = MOUSE_SENSITIVITY * (rmbDown ? AIM_SENS_MULT : 1);
+      turretYaw -= e.movementX * sens;
+    }
   });
 
   canvas.addEventListener('mousedown', (e) => {
-    if (e.button === 0 && pointerLocked) firing = true;
+    if (!pointerLocked) return;
+    if (e.button === 0) {
+      firing = true;
+      lmbDown = true;
+    } else if (e.button === 2) {
+      rmbDown = true;
+    }
   });
   window.addEventListener('mouseup', (e) => {
-    if (e.button === 0) firing = false;
+    if (e.button === 0) {
+      firing = false;
+      lmbDown = false;
+    } else if (e.button === 2) {
+      rmbDown = false;
+    }
   });
+  // RMB drives aim/zoom, not a context menu.
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
 // ---------- Touch controls (mobile) ----------
@@ -1399,7 +1440,9 @@ function setupTouchControls() {
         // single left/right axis, not a free-look that's easy to lose control of.
         const dx = t.clientX - lookLastX;
         lookLastX = t.clientX;
-        if (!lockedTargetId) turretYaw += dx * TOUCH_LOOK_SENSITIVITY;
+        // Sign negated to match the mouse fix above — see the comment on
+        // the mousemove handler for why "+movementX" turns the tank left.
+        if (!lockedTargetId) turretYaw -= dx * TOUCH_LOOK_SENSITIVITY;
       }
       e.preventDefault();
     },
@@ -1445,6 +1488,7 @@ setupTouchControls();
 function tryToggleLock() {
   if (lockedTargetId) {
     lockedTargetId = null;
+    comboLockOwned = false;
     return;
   }
   const self = entities.get(selfId);
@@ -1462,19 +1506,100 @@ function tryToggleLock() {
   lockedTargetId = best;
 }
 
+// Liang-Barsky segment/AABB clip test in the XZ plane — cheap line-of-sight
+// check reusing the same obstacle boxes the server uses for collision.
+function segmentIntersectsAabb(x1, z1, x2, z2, minX, minZ, maxX, maxZ) {
+  const dx = x2 - x1;
+  const dz = z2 - z1;
+  let t0 = 0;
+  let t1 = 1;
+  function clip(p, q) {
+    if (p === 0) return q >= 0;
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return false;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return false;
+      if (r < t1) t1 = r;
+    }
+    return true;
+  }
+  if (!clip(-dx, x1 - minX)) return false;
+  if (!clip(dx, maxX - x1)) return false;
+  if (!clip(-dz, z1 - minZ)) return false;
+  if (!clip(dz, maxZ - z1)) return false;
+  return t0 < t1;
+}
+
+function hasLineOfSight(x1, z1, x2, z2) {
+  for (const o of obstacles) {
+    if (segmentIntersectsAabb(x1, z1, x2, z2, o.x - o.w / 2, o.z - o.d / 2, o.x + o.w / 2, o.z + o.d / 2)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// LMB+RMB target acquisition: picks the valid, visible enemy whose direction
+// from the player is closest to the current aim (turretYaw), within the
+// lock-on cone/range — reuses the same lockedTargetId/updateAimLock system
+// as the Tab/touch quick-lock so tracking, release-on-invalid, and HUD stay
+// unified across both ways of acquiring a lock.
+function pickCrosshairTarget() {
+  const self = entities.get(selfId);
+  if (!self || !self.alive) return null;
+  let best = null;
+  let bestAngle = LOCK_MAX_ANGLE;
+  for (const [id, e] of entities) {
+    if (id === selfId || !e.alive) continue;
+    const dx = e.render.x - self.render.x;
+    const dz = e.render.z - self.render.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist < 0.01 || dist > LOCK_MAX_RANGE) continue;
+    const angle = Math.abs(angleDiff(turretYaw, Math.atan2(dx, dz)));
+    if (angle > bestAngle) continue;
+    if (!hasLineOfSight(self.render.x, self.render.z, e.render.x, e.render.z)) continue;
+    bestAngle = angle;
+    best = id;
+  }
+  return best;
+}
+
+// Called every frame: while both LMB+RMB are held, keep trying to acquire a
+// crosshair target (so swinging the aim onto an enemy locks on without a
+// fresh click); releases the lock the moment either button lets go, but only
+// if this combo — not Tab/touch — is the one that owns the current lock.
+function updateComboLock() {
+  if (lmbDown && rmbDown) {
+    if (!lockedTargetId) {
+      const target = pickCrosshairTarget();
+      if (target !== null) {
+        lockedTargetId = target;
+        comboLockOwned = true;
+      }
+    }
+  } else if (comboLockOwned) {
+    lockedTargetId = null;
+    comboLockOwned = false;
+  }
+}
+
 function updateAimLock(dt) {
   if (!lockedTargetId) return;
   const target = entities.get(lockedTargetId);
   const self = entities.get(selfId);
   if (!target || !target.alive || !self) {
     lockedTargetId = null;
+    comboLockOwned = false;
     return;
   }
   const dx = target.render.x - self.render.x;
   const dz = target.render.z - self.render.z;
   const dist = Math.hypot(dx, dz);
-  if (dist > LOCK_MAX_RANGE) {
+  if (dist > LOCK_MAX_RANGE || !hasLineOfSight(self.render.x, self.render.z, target.render.x, target.render.z)) {
     lockedTargetId = null;
+    comboLockOwned = false;
     return;
   }
   const desired = Math.atan2(dx, dz);
@@ -1714,7 +1839,9 @@ function updatePickups(dt, tSec) {
   }
 }
 
-function updateCamera() {
+let aimZoomT = 0; // eased 0..1, 0 = normal view, 1 = fully RMB-zoomed
+
+function updateCamera(dt) {
   const self = entities.get(selfId);
   if (!self) return;
   const yaw = self.render.turretRot;
@@ -1728,6 +1855,16 @@ function updateCamera() {
 
   camera.position.set(camX, camY + 2, camZ);
   camera.lookAt(targetX, targetY + 0.48, targetZ);
+
+  // Smoothly ease the FOV toward the RMB-aim target instead of snapping, so
+  // entering/leaving zoom never jitters or pops.
+  const zoomTarget = rmbDown ? 1 : 0;
+  aimZoomT += (zoomTarget - aimZoomT) * Math.min(1, AIM_ZOOM_SPEED * dt);
+  const fov = BASE_FOV + (AIM_FOV - BASE_FOV) * aimZoomT;
+  if (Math.abs(camera.fov - fov) > 0.01) {
+    camera.fov = fov;
+    camera.updateProjectionMatrix();
+  }
 }
 
 function updateHud() {
@@ -1858,6 +1995,7 @@ function animate() {
   lastTime = now;
 
   if (selfId) {
+    updateComboLock();
     updateAimLock(dt);
     updateLocalPrediction(dt);
     updateRemoteInterpolation();
@@ -1867,7 +2005,7 @@ function animate() {
     updatePickups(dt, now / 1000);
     updateBursts(dt);
     updateCombatNumbers(dt);
-    updateCamera();
+    updateCamera(dt);
     updateHud();
     updateLockUI();
     updateMinimap();

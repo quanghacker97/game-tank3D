@@ -130,9 +130,98 @@ const DIFFICULTY_META = {
 };
 const DIFFICULTY_KEYS = Object.keys(DIFFICULTY_META);
 
+// ---- Quick ping (section 6.2) — mirrors server/constants.js's PING_KINDS
+// icon/label; the server is the sole authority on validity/cooldown. ----
+const PING_META = {
+  attack: { label: 'Tấn công!', icon: '⚔️' },
+  defend: { label: 'Phòng thủ!', icon: '🛡️' },
+  enemy: { label: 'Có địch!', icon: '⚠️' },
+  help: { label: 'Cần trợ giúp!', icon: '🆘' },
+  incoming: { label: 'Đang đến!', icon: '🏃' },
+  target: { label: 'Mục tiêu!', icon: '🎯' },
+};
+const PING_COOLDOWN_MS_CLIENT = 2000; // mirrors server/constants.js's PING_COOLDOWN_MS -- purely a local "don't bother sending" guard, server still enforces the real one
+
+// ---- Tank skins (section 4.1-4.2): cosmetic-only recolors of the SAME
+// shared procedural tank model createTankMesh already builds for every
+// entity in the game — this project has no texture/asset pipeline (every
+// chapter "reskin" is a sky/fog tint for the same reason, see CHAPTER_THEMES
+// server-side), so a skin here is a hull color + emissive accent, never a
+// new stat. 'classic' is always unlocked (cost 0) and is what a brand-new
+// profile starts equipped with. The equipped skin id rides along in the
+// join payload and every snapshot (server-validated against SKIN_IDS, see
+// Game.js's addPlayer/equipSkin) so it renders for EVERY player, not just
+// the local self-view -- see applySnapshot's entityColor lookup below.
+const SKIN_CATALOG = [
+  { id: 'classic', label: 'Cổ Điển', icon: '🎨', cost: 0, hullColor: null, turretMult: 0.85, emissive: null },
+  { id: 'desert', label: 'Sa Mạc', icon: '🏜️', cost: 150, hullColor: 0xd9b56b, turretMult: 0.8, emissive: null },
+  { id: 'arctic', label: 'Bắc Cực', icon: '❄️', cost: 150, hullColor: 0xd8ecf5, turretMult: 0.85, emissive: null },
+  { id: 'military', label: 'Quân Đội', icon: '🪖', cost: 200, hullColor: 0x4a5a3a, turretMult: 0.8, emissive: null },
+  { id: 'stealth', label: 'Tàng Hình', icon: '🕶️', cost: 300, hullColor: 0x1c1f22, turretMult: 0.9, emissive: null },
+  { id: 'cyber', label: 'Cyber', icon: '🤖', cost: 350, hullColor: 0x0d2b33, turretMult: 1.1, emissive: 0x35e6ff },
+  { id: 'inferno', label: 'Địa Ngục', icon: '🔥', cost: 350, hullColor: 0x3d0d0d, turretMult: 1.1, emissive: 0xff4d1a },
+  { id: 'golden', label: 'Hoàng Kim', icon: '👑', cost: 500, hullColor: 0xd4af37, turretMult: 1.0, emissive: 0xffe08a },
+];
+
+// ---- Achievements (section 4.3): purely client-tracked, same trust model
+// as currency/upgrades already are (no account/auth system exists to check
+// against server-side) -- `check` reads from profile.stats, which the kill/
+// stage-clear event handlers below update as the player actually plays.
+// Each unlocks exactly once and pays a one-time currency reward.
+const ACHIEVEMENTS = [
+  { id: 'first_blood', label: 'Máu Đầu Tiên', desc: 'Hạ gục 1 kẻ địch', icon: '🎯', reward: 20, check: (s) => s.totalKills >= 1 },
+  { id: 'kill_100', label: 'Sát Thủ', desc: 'Hạ gục 100 kẻ địch', icon: '💀', reward: 100, check: (s) => s.totalKills >= 100 },
+  { id: 'boss_10', label: 'Khắc Tinh Trùm', desc: 'Đánh bại 10 trùm', icon: '👑', reward: 150, check: (s) => s.bossKills >= 10 },
+  { id: 'chapter_3', label: 'Vượt Ải', desc: 'Hoàn thành Chương 3', icon: '🏆', reward: 80, check: (s) => s.maxChapterCleared >= 3 },
+  { id: 'chapter_5_hard', label: 'Thử Thách Thực Sự', desc: 'Hoàn thành Chương 5 ở độ Khó trở lên', icon: '🔥', reward: 120, check: (s) => s.chapter5HardOrAbove },
+  { id: 'tdm_kills_100', label: 'Chiến Binh Tổ Đội', desc: 'Đạt 100 lượt hạ gục trong Tổ đội', icon: '🚩', reward: 100, check: (s) => s.tdmKills >= 100 },
+  { id: 'no_damage_5', label: 'Không Thể Chạm Tới', desc: 'Hạ 5 kẻ địch liên tiếp mà không mất máu', icon: '⭐', reward: 90, check: (s) => s.noDamageKillStreak >= 5 },
+  { id: 'special_ammo_100', label: 'Vũ Khí Đặc Biệt', desc: 'Hạ 100 kẻ địch bằng đạn đặc biệt', icon: '💥', reward: 100, check: (s) => s.specialAmmoKills >= 100 },
+  // Survival integration (section 62) -- reuses this SAME achievement
+  // system/array, never a second one.
+  { id: 'survival_5min', label: 'Bền Bỉ', desc: 'Sống sót 5 phút trong Sinh Tồn', icon: '⏱️', reward: 80, check: (s) => s.survivalMaxTimeS >= 300 },
+  { id: 'survival_wave_25', label: 'Không Gì Cản Nổi', desc: 'Đạt Đợt sóng 25 trong Sinh Tồn', icon: '🌊', reward: 150, check: (s) => s.survivalMaxWave >= 25 },
+  { id: 'survival_boss_1', label: 'Kẻ Diệt Trùm Sinh Tồn', desc: 'Đánh bại 1 boss trong chế độ Sinh Tồn', icon: '👑', reward: 100, check: (s) => s.survivalBossKillsTotal >= 1 },
+];
+// PvP kill/assist currency (section 5.5) -- see the 'kill'/'assist' event
+// handlers below for where these are actually granted.
+const PVP_KILL_REWARD = 5;
+const PVP_ASSIST_REWARD = 2;
+
+// ---- Tutorial (section 6.3): a short, skippable, learn-by-reading-then-
+// doing walkthrough shown once to brand-new profiles before their first
+// match. Kept to plain static cards rather than a scripted practice level
+// (a real "learn by doing" arena) -- an honest scope cut given the time
+// available, not a claim this is a full interactive tutorial. ----
+const TUTORIAL_STEPS = [
+  { icon: '🕹️', title: 'Di chuyển', desc: 'Dùng W/A/S/D để tiến, lùi, né trái/phải. Xe tăng luôn quay đầu theo hướng chuột.' },
+  { icon: '🔫', title: 'Ngắm & Bắn', desc: 'Di chuột để xoay nòng pháo. Giữ chuột trái hoặc phím Space để bắn liên tục.' },
+  { icon: '🔍', title: 'Ngắm cận cảnh (ADS)', desc: 'Giữ chuột phải để zoom cận cảnh, ngắm chính xác hơn ở tầm xa.' },
+  { icon: '🎯', title: 'Khóa mục tiêu', desc: 'Nhấn Tab để khóa kẻ địch gần nhất — hỗ trợ ngắm và vũ khí tự dẫn đường.' },
+  { icon: '💨', title: 'Chạy nước rút', desc: 'Giữ Shift để tăng tốc, tiêu hao thể lực (thanh dưới máu). Hết thể lực sẽ tự hồi khi ngừng chạy.' },
+  { icon: '📦', title: 'Vật phẩm', desc: 'Đi qua vật phẩm rơi trên bản đồ để nhận giáp, hồi máu, đạn đặc biệt (nổ, xuyên giáp, tự dẫn, mìn...) hoặc vũ khí hỗ trợ.' },
+  { icon: '🔧', title: 'Nâng cấp & Perk', desc: 'Dùng Xu kiếm được để nâng cấp vĩnh viễn trong Gara. Trong Chiến dịch, mỗi ải hoàn thành sẽ được chọn thêm 1 Perk.' },
+  { icon: '📣', title: 'Ping nhanh', desc: 'Nhấn phím 1-6 (hoặc bấm nút ở giữa màn hình) để báo hiệu nhanh cho đồng đội: Tấn công, Phòng thủ, Có địch, Cần trợ giúp...' },
+];
+
+function defaultStats() {
+  return {
+    totalKills: 0,
+    bossKills: 0,
+    tdmKills: 0,
+    specialAmmoKills: 0,
+    noDamageKillStreak: 0,
+    maxChapterCleared: 0,
+    chapter5HardOrAbove: false,
+    survivalMaxTimeS: 0,
+    survivalMaxWave: 0,
+    survivalBossKillsTotal: 0,
+  };
+}
+
 // Shared objective-type label map — used by both the stage-select grid and
 // the pre-stage confirmation screen (section: "Pre-Stage Confirmation").
-const OBJECTIVE_LABELS = { eliminate: 'Tiêu diệt', survive: 'Sống sót', defend: 'Phòng thủ', hunt: 'Truy lùng', boss: 'TRÙM' };
+const OBJECTIVE_LABELS = { eliminate: 'Tiêu diệt', survive: 'Sống sót', defend: 'Phòng thủ', hunt: 'Truy lùng', boss: 'TRÙM', endless: 'Sinh tồn — càng lâu càng khó' };
 
 // Visual/label metadata for weapons & pickups — must mirror the kinds server/
 // constants.js's WEAPON_TYPES / PICKUP_TYPES can produce. Damage/splash stay
@@ -158,6 +247,9 @@ const WEAPON_META = {
   vampire: { icon: '🩸', label: 'Đạn hút máu', cooldownMult: 1.6, tag: 'HÚT MÁU HỒI SINH LỰC' },
   marking: { icon: '🎯', label: 'Đạn đánh dấu', cooldownMult: 1.5, tag: 'ĐÁNH DẤU CHO ĐỒNG ĐỘI' },
   cluster: { icon: '💥', label: 'Đạn chùm', cooldownMult: 2.0, tag: 'NỔ THÀNH NHIỀU MẢNH' },
+  // maxActive mirrors WEAPON_TYPES.mine.mineMaxActive on the server — display
+  // only; the server is the sole authority on the actual cap.
+  mine: { icon: '🧨', label: 'Mìn cài', cooldownMult: 1.7, tag: 'BẮN ĐỂ CÀI BẪY', maxActive: 3 },
 };
 
 // `rarity` must mirror server/constants.js's PICKUP_TYPES so the pickup's
@@ -184,6 +276,7 @@ const PICKUP_META = {
   weapon_vampire: { icon: '🩸', label: 'Đạn hút máu', color: 0xff2d55, rarity: 'rare' },
   weapon_cluster: { icon: '💥', label: 'Đạn chùm', color: 0xffa64d, rarity: 'rare' },
   weapon_marking: { icon: '🎯', label: 'Đạn đánh dấu', color: 0xffe14d, rarity: 'epic' },
+  weapon_mine: { icon: '🧨', label: 'Mìn cài', color: 0xff3b3b, rarity: 'epic' },
   // Support-weapon crates — visually larger/brighter markers (see
   // createPickupMesh) so they read as a special, rarer find on sight.
   support_turret: { icon: '🗼', label: 'Auto Turret', color: 0xffb020, support: true, rarity: 'common' },
@@ -568,6 +661,28 @@ function distVolMult(x, z, maxDist = 55) {
   return Math.max(0, 1 - d / maxDist);
 }
 
+// ---------- Reconnect (section 3.1-3.3): a persistent, opaque session id ----------
+// Never an auth credential -- just lets the server recognize "this is the
+// same browser tab as the connection that just dropped" so a brief network
+// blip can resume the same player instead of losing the run.
+const SESSION_KEY = 'tank3d_session_v1';
+function getOrCreateSessionId() {
+  try {
+    let id = localStorage.getItem(SESSION_KEY);
+    if (!id) {
+      id = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      localStorage.setItem(SESSION_KEY, id);
+    }
+    return id;
+  } catch (e) {
+    // localStorage unavailable (private mode, storage blocked) -- fall back
+    // to a per-load id; reconnect simply won't survive a full page reload,
+    // which is the same as this feature not existing at all.
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+}
+const sessionId = getOrCreateSessionId();
+
 // ---------- Profile / progression (localStorage) ----------
 const PROFILE_KEY = 'tank3d_profile_v1';
 
@@ -605,6 +720,12 @@ function loadProfile() {
       for (const perk of PERK_POOL) {
         if (p.perks && p.perks[perk.id] !== undefined) perks[perk.id] = clampLevel(p.perks[perk.id], perk.maxStacks);
       }
+      const unlockedSkins = Array.isArray(p.unlockedSkins) ? p.unlockedSkins.filter((id) => SKIN_CATALOG.some((s) => s.id === id)) : [];
+      if (!unlockedSkins.includes('classic')) unlockedSkins.push('classic');
+      const stats = defaultStats();
+      if (p.stats) for (const key of Object.keys(stats)) if (p.stats[key] !== undefined) stats[key] = p.stats[key];
+      const achievements = {};
+      if (p.achievements) for (const a of ACHIEVEMENTS) if (p.achievements[a.id]) achievements[a.id] = true;
       return {
         name: typeof p.name === 'string' ? p.name.slice(0, 16) : '',
         currency: Number.isFinite(p.currency) ? Math.max(0, p.currency) : 0,
@@ -612,12 +733,43 @@ function loadProfile() {
         perks,
         difficulty: DIFFICULTY_KEYS.includes(p.difficulty) ? p.difficulty : 'normal',
         unlockedStage: Number.isFinite(p.unlockedStage) ? Math.max(1, p.unlockedStage) : 1,
+        unlockedSkins,
+        equippedSkin: SKIN_CATALOG.some((s) => s.id === p.equippedSkin) ? p.equippedSkin : 'classic',
+        stats,
+        achievements,
+        // Migration note: a profile saved before this feature existed has
+        // no `tutorialSeen` field at all -- rather than showing an already-
+        // experienced player the tutorial once just because of when they
+        // last played, infer "clearly not brand new" from other existing
+        // progress and skip it for them too.
+        tutorialSeen: p.tutorialSeen !== undefined ? !!p.tutorialSeen : (p.unlockedStage > 1 || p.currency > 0),
+        // Survival personal best (section 37-38) -- client-tracked, same
+        // trust model as the rest of this profile (no account/leaderboard
+        // system exists to check against, see section 39).
+        survivalBest: {
+          wave: Number.isFinite(p.survivalBest && p.survivalBest.wave) ? p.survivalBest.wave : 0,
+          time: Number.isFinite(p.survivalBest && p.survivalBest.time) ? p.survivalBest.time : 0,
+          score: Number.isFinite(p.survivalBest && p.survivalBest.score) ? p.survivalBest.score : 0,
+        },
       };
     }
   } catch (e) {
     /* ignore corrupt storage */
   }
-  return { name: '', currency: 0, upgrades: defaultUpgrades(), perks: defaultPerks(), difficulty: 'normal', unlockedStage: 1 };
+  return {
+    name: '',
+    currency: 0,
+    upgrades: defaultUpgrades(),
+    perks: defaultPerks(),
+    difficulty: 'normal',
+    unlockedStage: 1,
+    unlockedSkins: ['classic'],
+    equippedSkin: 'classic',
+    stats: defaultStats(),
+    achievements: {},
+    tutorialSeen: false,
+    survivalBest: { wave: 0, time: 0, score: 0 },
+  };
 }
 
 function saveProfile() {
@@ -643,6 +795,12 @@ const canvas = document.getElementById('scene');
 const loginOverlay = document.getElementById('loginOverlay');
 const elPanelName = document.getElementById('panelName');
 const elPanelMenu = document.getElementById('panelMenu');
+const elPanelTeamSelect = document.getElementById('panelTeamSelect');
+const elPanelKothSelect = document.getElementById('panelKothSelect');
+const elPanelEndlessSelect = document.getElementById('panelEndlessSelect');
+const elPanelDaily = document.getElementById('panelDaily');
+const elPanelAchievements = document.getElementById('panelAchievements');
+const elPanelTutorial = document.getElementById('panelTutorial');
 const elPanelStages = document.getElementById('panelStages');
 const elPanelGarage = document.getElementById('panelGarage');
 
@@ -655,7 +813,53 @@ const changeNameLinkEl = document.getElementById('changeNameLink');
 const btnArenaEl = document.getElementById('btnArena');
 const btnTeamEl = document.getElementById('btnTeam');
 const btnCampaignEl = document.getElementById('btnCampaign');
+const btnEndlessEl = document.getElementById('btnEndless');
 const btnGarageEl = document.getElementById('btnGarage');
+const btnEndlessSoloEl = document.getElementById('btnEndlessSolo');
+const btnEndlessCoopEl = document.getElementById('btnEndlessCoop');
+const endlessCoopCountEl = document.getElementById('endlessCoopCount');
+const endlessBestLineEl = document.getElementById('endlessBestLine');
+const endlessSelectBackEl = document.getElementById('endlessSelectBack');
+const teamInviteBtnEl = document.getElementById('teamInviteBtn');
+const kothInviteBtnEl = document.getElementById('kothInviteBtn');
+const endlessInviteBtnEl = document.getElementById('endlessInviteBtn');
+const btnDailyEl = document.getElementById('btnDaily');
+const btnDailyStartEl = document.getElementById('btnDailyStart');
+const btnDailySurvivalSoloEl = document.getElementById('btnDailySurvivalSolo');
+const btnDailySurvivalCoopEl = document.getElementById('btnDailySurvivalCoop');
+const dailyCoopCountEl = document.getElementById('dailyCoopCount');
+const dailyBackEl = document.getElementById('dailyBack');
+const dailyStageNameEl = document.getElementById('dailyStageName');
+const dailyModifierLabelEl = document.getElementById('dailyModifierLabel');
+const dailyModifierDescEl = document.getElementById('dailyModifierDesc');
+const dailyBonusEl = document.getElementById('dailyBonus');
+const btnAchievementsEl = document.getElementById('btnAchievements');
+const achievementListEl = document.getElementById('achievementList');
+const achievementsBackEl = document.getElementById('achievementsBack');
+const btnTutorialEl = document.getElementById('btnTutorial');
+const tutorialIconEl = document.getElementById('tutorialIcon');
+const tutorialTitleEl = document.getElementById('tutorialTitle');
+const tutorialDescEl = document.getElementById('tutorialDesc');
+const tutorialProgressEl = document.getElementById('tutorialProgress');
+const btnTutorialNextEl = document.getElementById('btnTutorialNext');
+const btnTutorialSkipEl = document.getElementById('btnTutorialSkip');
+const btnTeamRedEl = document.getElementById('btnTeamRed');
+const btnTeamBlueEl = document.getElementById('btnTeamBlue');
+const btnTeamAutoEl = document.getElementById('btnTeamAuto');
+const teamRedCountEl = document.getElementById('teamRedCount');
+const teamBlueCountEl = document.getElementById('teamBlueCount');
+const teamRedWarnEl = document.getElementById('teamRedWarn');
+const teamBlueWarnEl = document.getElementById('teamBlueWarn');
+const teamSelectBackEl = document.getElementById('teamSelectBack');
+const btnKothEl = document.getElementById('btnKoth');
+const btnKothRedEl = document.getElementById('btnKothRed');
+const btnKothBlueEl = document.getElementById('btnKothBlue');
+const btnKothAutoEl = document.getElementById('btnKothAuto');
+const kothRedCountEl = document.getElementById('kothRedCount');
+const kothBlueCountEl = document.getElementById('kothBlueCount');
+const kothRedWarnEl = document.getElementById('kothRedWarn');
+const kothBlueWarnEl = document.getElementById('kothBlueWarn');
+const kothSelectBackEl = document.getElementById('kothSelectBack');
 const difficultyRowEl = document.getElementById('difficultyRow');
 const chapterListEl = document.getElementById('chapterList');
 const stagesBackEl = document.getElementById('stagesBack');
@@ -672,10 +876,20 @@ const objectiveRowEl = document.getElementById('objectiveRow');
 const objectiveLabelEl = document.getElementById('objectiveLabel');
 const objectiveBarWrapEl = document.getElementById('objectiveBarWrap');
 const objectiveBarEl = document.getElementById('objectiveBar');
+const optionalObjectiveRowEl = document.getElementById('optionalObjectiveRow');
+const optionalObjectiveLabelEl = document.getElementById('optionalObjectiveLabel');
+const survivalStatsRowEl = document.getElementById('survivalStatsRow');
+const survivalTimeStatEl = document.getElementById('survivalTimeStat');
+const survivalKillsStatEl = document.getElementById('survivalKillsStat');
+const survivalScoreStatEl = document.getElementById('survivalScoreStat');
+const survivalNextWaveRowEl = document.getElementById('survivalNextWaveRow');
+const survivalNextWaveCountEl = document.getElementById('survivalNextWaveCount');
+const survivalWarningBannerEl = document.getElementById('survivalWarningBanner');
 const bossHudEl = document.getElementById('bossHud');
 const bossHudNameEl = document.getElementById('bossHudName');
 const bossHudBarEl = document.getElementById('bossHudBar');
 const bossHudPhasePipsEl = document.getElementById('bossHudPhasePips');
+const bossHudWeakPointEl = document.getElementById('bossHudWeakPoint');
 const bossTelegraphEl = document.getElementById('bossTelegraphEl');
 const hudCurrencyValueEl = document.getElementById('hudCurrencyValue');
 const teamBadgeEl = document.getElementById('teamBadge');
@@ -700,9 +914,22 @@ const supportPanelTimeEl = document.getElementById('supportPanelTime');
 const crosshairEl = document.getElementById('crosshair');
 const lockLabelEl = document.getElementById('lockLabel');
 const killfeedEl = document.getElementById('killfeed');
+const pingRowEl = document.getElementById('pingRow');
+const pingButtons = {
+  attack: document.getElementById('pingBtnAttack'),
+  defend: document.getElementById('pingBtnDefend'),
+  enemy: document.getElementById('pingBtnEnemy'),
+  help: document.getElementById('pingBtnHelp'),
+  incoming: document.getElementById('pingBtnIncoming'),
+  target: document.getElementById('pingBtnTarget'),
+};
 const scoreboardEl = document.getElementById('scoreboard');
 const deathBanner = document.getElementById('deathBanner');
 const respawnCountEl = document.getElementById('respawnCount');
+const spectateRowEl = document.getElementById('spectateRow');
+const spectateLabelEl = document.getElementById('spectateLabel');
+const spectatePrevBtnEl = document.getElementById('spectatePrevBtn');
+const spectateNextBtnEl = document.getElementById('spectateNextBtn');
 const stageIntroOverlayEl = document.getElementById('stageIntroOverlay');
 const stageIntroTitleEl = document.getElementById('stageIntroTitle');
 const stageIntroSubEl = document.getElementById('stageIntroSub');
@@ -1121,7 +1348,36 @@ function createTankMesh(color) {
   tankGroup.scale.setScalar(TANK_VISUAL_SCALE);
   scene.add(tankGroup);
 
-  return { tankGroup, bodyPivot, turretPivot, shieldMesh, invulnMesh, energyShieldMesh, supportMesh, statusMesh };
+  return { tankGroup, bodyPivot, turretPivot, shieldMesh, invulnMesh, energyShieldMesh, supportMesh, statusMesh, hullMat, turretMat };
+}
+
+// Tank skins (section 4.1-4.2 follow-up): a skin can now change mid-session
+// (see equipSkin), so an already-created entity's hull/turret materials
+// need to be recolored in place rather than only ever set once at mesh
+// creation -- mirrors createTankMesh's own baseColor/turretColor relationship.
+function recolorTankMesh(mesh, color) {
+  mesh.hullMat.color.set(color);
+  mesh.turretMat.color.copy(mesh.hullMat.color).multiplyScalar(0.85);
+}
+
+// Boss weak point (section 1.9) — created lazily, once, the first time a
+// boss entity is seen to actually have one (most bots/bosses never need
+// this extra mesh at all). Sits on the hull's REAR deck (matching
+// createTankMesh's own rearDeck at local z=-2.0, since local +z is the
+// model's front), so it turns with the boss automatically via bodyPivot.
+function ensureWeakPointMesh(e) {
+  if (e.mesh.weakPointMesh) return;
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xff2d2d,
+    emissive: 0xff2d2d,
+    emissiveIntensity: 1.4,
+    roughness: 0.4,
+  });
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.42, 12, 10), mat);
+  mesh.position.set(0, 1.35, -2.05);
+  mesh.visible = false;
+  e.mesh.bodyPivot.add(mesh);
+  e.mesh.weakPointMesh = mesh;
 }
 
 // ---------- Bullet visuals ----------
@@ -1532,10 +1788,31 @@ function updateCombatNumbers(dt) {
 }
 
 // ---------- Networking / state ----------
-const socket = io();
+// A finite reconnectionAttempts (rather than Socket.IO's default of
+// unlimited retries) means a truly dead connection eventually reaches
+// 'reconnect_failed' and can show a clear "give up" state (section 3.2)
+// instead of silently retrying forever.
+const socket = io({ reconnectionAttempts: 10 });
 
 let selfId = null;
 let mode = null; // 'arena' | 'campaign'
+// Reconnect (section 3.1-3.3): remembered ONLY so a dropped-then-restored
+// connection can silently re-emit the exact same join, and so the UI knows
+// whether a disconnect right now is "mid-match" (worth a reconnect banner)
+// or just sitting at the menu (not worth alarming anyone about).
+let lastJoinOpts = null;
+let inRoom = false;
+const connStatusEl = document.getElementById('connStatus');
+function showConnStatus(state) {
+  if (state === 'stable') {
+    connStatusEl.classList.add('hidden');
+    return;
+  }
+  connStatusEl.classList.remove('hidden');
+  connStatusEl.classList.toggle('reconnecting', state === 'reconnecting');
+  connStatusEl.classList.toggle('failed', state === 'failed');
+  connStatusEl.textContent = state === 'reconnecting' ? '🟡 Đang kết nối lại…' : '🔴 Mất kết nối';
+}
 let latestStageStatus = null;
 let stageResultShown = false;
 
@@ -1549,6 +1826,19 @@ let latestPickupData = [];
 
 const zoneMeshes = new Map(); // id -> { group, disc, ring }
 let latestZoneData = [];
+
+const mineMeshes = new Map(); // id -> { group, body, light, ring, state }
+let latestMineData = [];
+
+const hazardMeshes = new Map(); // index -> { group, disc, ring, type, phase }
+let latestHazardData = [];
+
+// Quick ping (section 6.2): active blips shown on the minimap, each fading
+// out after a few seconds -- see the 'ping' event handler and updateMinimap.
+let activePings = [];
+
+// King of the Hill (section 5.1-5.3)
+let latestKothData = null; // { red, blue, target, zone: {x,z,radius}, controlling }
 
 let localDeathStart = 0;
 let lastLowHpBeep = 0;
@@ -1590,6 +1880,7 @@ function ensureEntity(id, color) {
 
   e = {
     mesh,
+    appliedColor: color,
     nameTagEl,
     hpFillEl,
     statusIconRowEl,
@@ -1633,6 +1924,7 @@ function ensureEntity(id, color) {
     bossPhase: 0,
     bossEnraged: false,
     bossInvuln: false,
+    weakPoint: null,
   };
   entities.set(id, e);
   return e;
@@ -1649,6 +1941,10 @@ function removeEntity(id) {
 }
 
 function resetGameState() {
+  lastHudSurvivalKey = '';
+  survivalStatsRowEl.classList.add('hidden');
+  survivalNextWaveRowEl.classList.add('hidden');
+  survivalWarningBannerEl.classList.add('hidden');
   for (const id of Array.from(entities.keys())) removeEntity(id);
   for (const mesh of bulletMeshes.values()) {
     scene.remove(mesh);
@@ -1671,6 +1967,21 @@ function resetGameState() {
   }
   zoneMeshes.clear();
   latestZoneData = [];
+  for (const entry of mineMeshes.values()) {
+    scene.remove(entry.group);
+    disposeObject3D(entry.group);
+  }
+  mineMeshes.clear();
+  latestMineData = [];
+  for (const entry of hazardMeshes.values()) {
+    scene.remove(entry.group);
+    disposeObject3D(entry.group);
+  }
+  hazardMeshes.clear();
+  latestHazardData = [];
+  latestKothData = null;
+  if (kothZoneMesh) kothZoneMesh.group.visible = false;
+  activePings = [];
   for (const b of lightningBolts) {
     scene.remove(b.line);
     b.line.geometry.dispose();
@@ -1728,15 +2039,54 @@ function addKillfeedEntry(html) {
   while (killfeedEl.children.length > 6) killfeedEl.removeChild(killfeedEl.firstChild);
 }
 
+// Achievements (section 4.3): checked after every stat update; unlocks
+// exactly once each (guarded by profile.achievements), pays its reward
+// immediately, and surfaces through the same killfeed everything else
+// already uses for "something happened" (no new UI needed for the alert
+// itself -- the dedicated panel, opened from the main menu, is where a
+// player reviews the full list/progress at their own pace).
+function checkAchievements() {
+  for (const a of ACHIEVEMENTS) {
+    if (profile.achievements[a.id]) continue;
+    if (!a.check(profile.stats)) continue;
+    profile.achievements[a.id] = true;
+    profile.currency += a.reward;
+    addKillfeedEntry(`🏆 <span class="k">Thành tựu mới:</span> <span class="v">${escapeHtml(a.label)}</span> (+${a.reward} Xu)`);
+    Sound.pickup();
+  }
+}
+
+// Survival warning banner (section 45): a big, unmissable "something is
+// about to happen" callout for elite/miniboss/boss incoming -- always the
+// LATEST warning wins (a new one simply restarts the hide timer) rather
+// than queuing, since only one encounter is ever actually starting at once.
+let survivalWarningHideAt = 0;
+function showSurvivalWarning(text, ms) {
+  survivalWarningBannerEl.textContent = text;
+  survivalWarningBannerEl.classList.remove('hidden');
+  survivalWarningHideAt = performance.now() + ms;
+}
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 // ---------- Screen navigation ----------
 function showPanel(name) {
-  for (const el of [elPanelName, elPanelMenu, elPanelStages, elPanelGarage]) el.classList.add('hidden');
+  for (const el of [elPanelName, elPanelMenu, elPanelTeamSelect, elPanelKothSelect, elPanelEndlessSelect, elPanelDaily, elPanelAchievements, elPanelTutorial, elPanelStages, elPanelGarage]) el.classList.add('hidden');
   loginOverlay.classList.remove('hidden');
-  ({ name: elPanelName, menu: elPanelMenu, stages: elPanelStages, garage: elPanelGarage })[name].classList.remove('hidden');
+  ({
+    name: elPanelName,
+    menu: elPanelMenu,
+    teamSelect: elPanelTeamSelect,
+    kothSelect: elPanelKothSelect,
+    endlessSelect: elPanelEndlessSelect,
+    daily: elPanelDaily,
+    achievements: elPanelAchievements,
+    tutorial: elPanelTutorial,
+    stages: elPanelStages,
+    garage: elPanelGarage,
+  })[name].classList.remove('hidden');
 }
 
 function refreshMenuTexts() {
@@ -1758,6 +2108,156 @@ function renderDifficultyRow() {
       renderDifficultyRow();
     });
     difficultyRowEl.appendChild(btn);
+  }
+}
+
+// ---------- Team select: live counts + balance hint (free choice, never blocked) ----------
+const TEAM_BALANCE_WARN_DIFF = 2; // >= this many more players on one side warns THAT side's button
+
+function setTeamButtonCount(countEl, warnEl, n, isWarn) {
+  countEl.textContent = Number.isFinite(n) ? `${n} người` : '–';
+  warnEl.classList.toggle('hidden', !isWarn);
+}
+
+// Re-fetched fresh every time the team-select screen opens (never cached
+// across visits) so the player always sees the CURRENT room state -- same
+// one-shot-fetch-per-open pattern renderStages()/renderGarage() already use
+// for their own panels.
+function renderTeamSelect() {
+  setTeamButtonCount(teamRedCountEl, teamRedWarnEl, null, false);
+  setTeamButtonCount(teamBlueCountEl, teamBlueWarnEl, null, false);
+  fetch('/api/team-counts')
+    .then((r) => r.json())
+    .then((counts) => {
+      const red = Number(counts && counts.red) || 0;
+      const blue = Number(counts && counts.blue) || 0;
+      setTeamButtonCount(teamRedCountEl, teamRedWarnEl, red, red - blue >= TEAM_BALANCE_WARN_DIFF);
+      setTeamButtonCount(teamBlueCountEl, teamBlueWarnEl, blue, blue - red >= TEAM_BALANCE_WARN_DIFF);
+    })
+    .catch(() => {
+      // Count fetch failed (network hiccup) -- leave counts at '–' with no
+      // warning. Buttons stay fully clickable: joining team mode must never
+      // be blocked by a failed pre-join info fetch (this endpoint is purely
+      // informational).
+    });
+}
+
+// King of the Hill reuses Team Deathmatch's exact team-select pattern (live
+// counts + balance hint, free choice never blocked, see TEAM_BALANCE_WARN_DIFF).
+function renderKothSelect() {
+  setTeamButtonCount(kothRedCountEl, kothRedWarnEl, null, false);
+  setTeamButtonCount(kothBlueCountEl, kothBlueWarnEl, null, false);
+  fetch('/api/koth-counts')
+    .then((r) => r.json())
+    .then((counts) => {
+      const red = Number(counts && counts.red) || 0;
+      const blue = Number(counts && counts.blue) || 0;
+      setTeamButtonCount(kothRedCountEl, kothRedWarnEl, red, red - blue >= TEAM_BALANCE_WARN_DIFF);
+      setTeamButtonCount(kothBlueCountEl, kothBlueWarnEl, blue, blue - red >= TEAM_BALANCE_WARN_DIFF);
+    })
+    .catch(() => {});
+}
+
+// ---------- Endless/Survival select: solo vs co-op, live co-op headcount ----------
+function renderEndlessSelect() {
+  const best = profile.survivalBest;
+  const bestMm = String(Math.floor(best.time / 60)).padStart(2, '0');
+  const bestSs = String(best.time % 60).padStart(2, '0');
+  endlessBestLineEl.textContent =
+    best.wave > 0 ? `🏆 Kỷ lục cá nhân: Đợt ${best.wave} · ${bestMm}:${bestSs} · ${best.score.toLocaleString('vi-VN')} điểm` : 'Chưa có kỷ lục — hãy thử ngay!';
+  endlessCoopCountEl.textContent = '–';
+  fetch('/api/survival-coop-count')
+    .then((r) => r.json())
+    .then((data) => {
+      const count = Number(data && data.count) || 0;
+      endlessCoopCountEl.textContent = `${count} người đang chơi`;
+    })
+    .catch(() => {
+      // Same fail-open precedent as renderTeamSelect: informational only,
+      // never blocks joining either solo or co-op.
+    });
+}
+
+// ---------- Daily Challenge: today's fixed stage + modifier ----------
+function renderDaily() {
+  dailyStageNameEl.textContent = 'Đang tải…';
+  dailyModifierLabelEl.textContent = '';
+  dailyModifierDescEl.textContent = '';
+  dailyBonusEl.textContent = '';
+  dailyCoopCountEl.textContent = '';
+  fetch('/api/daily')
+    .then((r) => r.json())
+    .then((d) => {
+      dailyStageNameEl.textContent = d.stageName || '';
+      dailyModifierLabelEl.textContent = `🎲 ${d.modifierLabel}`;
+      dailyModifierDescEl.textContent = d.modifierDesc;
+      dailyBonusEl.textContent = `Thưởng thêm khi hoàn thành: +${d.bonusReward} Xu`;
+    })
+    .catch(() => {
+      dailyStageNameEl.textContent = 'Không tải được thông tin hôm nay — vẫn có thể bắt đầu.';
+    });
+  // Live headcount for the Daily Survival co-op button, same fail-open
+  // precedent as renderEndlessSelect's own coop-count fetch.
+  fetch('/api/survival-coop-daily-count')
+    .then((r) => r.json())
+    .then((d) => {
+      dailyCoopCountEl.textContent = `(${d.count} đang chơi)`;
+    })
+    .catch(() => {});
+}
+
+// ---------- Tutorial (section 6.3) ----------
+let tutorialStepIndex = 0;
+let tutorialOnFinish = null;
+
+function renderTutorialStep() {
+  const step = TUTORIAL_STEPS[tutorialStepIndex];
+  tutorialIconEl.textContent = step.icon;
+  tutorialTitleEl.textContent = step.title;
+  tutorialDescEl.textContent = step.desc;
+  tutorialProgressEl.textContent = `Bước ${tutorialStepIndex + 1}/${TUTORIAL_STEPS.length}`;
+  btnTutorialNextEl.textContent = tutorialStepIndex === TUTORIAL_STEPS.length - 1 ? 'Bắt đầu chơi' : 'Tiếp theo';
+}
+
+function startTutorial(onFinish) {
+  tutorialStepIndex = 0;
+  tutorialOnFinish = onFinish;
+  renderTutorialStep();
+  showPanel('tutorial');
+}
+
+function finishTutorial() {
+  profile.tutorialSeen = true;
+  saveProfile();
+  const cb = tutorialOnFinish;
+  tutorialOnFinish = null;
+  if (cb) cb();
+}
+
+btnTutorialNextEl.addEventListener('click', () => {
+  tutorialStepIndex++;
+  if (tutorialStepIndex >= TUTORIAL_STEPS.length) finishTutorial();
+  else renderTutorialStep();
+});
+btnTutorialSkipEl.addEventListener('click', finishTutorial);
+btnTutorialEl.addEventListener('click', () => startTutorial(() => showPanel('menu')));
+
+// ---------- Achievements (section 4.3) ----------
+function renderAchievements() {
+  achievementListEl.innerHTML = '';
+  for (const a of ACHIEVEMENTS) {
+    const unlocked = !!profile.achievements[a.id];
+    const row = document.createElement('div');
+    row.className = 'achievementRow' + (unlocked ? ' unlocked' : '');
+    row.innerHTML = `
+      <div class="achievementIcon">${unlocked ? a.icon : '🔒'}</div>
+      <div class="achievementInfo">
+        <div class="achievementName">${escapeHtml(a.label)}</div>
+        <div class="achievementDesc">${escapeHtml(a.desc)}</div>
+      </div>
+      <div class="achievementReward">${unlocked ? 'Đã đạt' : `+${a.reward} Xu`}</div>
+    `;
+    achievementListEl.appendChild(row);
   }
 }
 
@@ -1789,8 +2289,9 @@ function renderStages() {
       const card = document.createElement('div');
       card.className = 'stageCard' + (unlocked ? '' : ' locked') + (s.isBoss ? ' boss' : '') + (cleared ? ' cleared' : '');
       const objLabel = OBJECTIVE_LABELS[s.objective.type] || '';
+      const tagIcons = (s.hasHazards ? '⚠️' : '') + (s.hasOptionalObjective ? '🔍' : '');
       card.innerHTML = `
-        <div class="stageName">${s.stageInChapter}. ${s.isBoss ? '👑 ' + escapeHtml(s.bossName || 'Trùm') : objLabel}</div>
+        <div class="stageName">${s.stageInChapter}. ${s.isBoss ? '👑 ' + escapeHtml(s.bossName || 'Trùm') : objLabel} ${tagIcons}</div>
         <div class="stageMeta">${s.botCount} địch · +${s.reward} Xu</div>
         ${unlocked ? '' : '<div class="lockIcon">🔒</div>'}
       `;
@@ -1804,10 +2305,14 @@ function renderStages() {
 
 // ---------- Garage: 25 upgrade nodes across 6 categories (sections 7-17) ----------
 let activeUpgradeCategory = 'offense';
+// Skins (section 4.1-4.2) reuse the exact same tab-row UI as the 6 real
+// upgrade categories -- it's just not backed by UPGRADE_CATALOG, so
+// renderGarage() below special-cases it before the normal node-list logic.
+const GARAGE_TABS = [...UPGRADE_CATEGORIES, { id: 'skins', label: 'Skin xe tăng', icon: '🎨' }];
 
 function renderUpgradeCategoryTabs() {
   upgradeCategoryTabsEl.innerHTML = '';
-  for (const cat of UPGRADE_CATEGORIES) {
+  for (const cat of GARAGE_TABS) {
     const btn = document.createElement('button');
     btn.className = 'categoryTab' + (activeUpgradeCategory === cat.id ? ' active' : '');
     btn.textContent = `${cat.icon} ${cat.label}`;
@@ -1830,9 +2335,53 @@ function formatUpgradeValue(node, lvl) {
   return `${v.toFixed(2)} ${node.unit}`;
 }
 
+function renderSkinGrid() {
+  upgradeListEl.innerHTML = '';
+  const grid = document.createElement('div');
+  grid.className = 'skinGrid';
+  for (const skin of SKIN_CATALOG) {
+    const unlocked = profile.unlockedSkins.includes(skin.id);
+    const equipped = profile.equippedSkin === skin.id;
+    const card = document.createElement('div');
+    card.className = 'skinCard' + (equipped ? ' equipped' : '') + (unlocked ? '' : ' locked');
+    const previewColor = skin.hullColor != null ? `#${skin.hullColor.toString(16).padStart(6, '0')}` : '#8fa0b3';
+    card.innerHTML = `
+      <div class="skinPreview" style="background:${previewColor}">${skin.icon}</div>
+      <div class="skinLabel">${escapeHtml(skin.label)}</div>
+      <button class="skinBtn" ${!unlocked && profile.currency < skin.cost ? 'disabled' : ''}>
+        ${equipped ? 'Đã trang bị' : unlocked ? 'Trang bị' : `Mở khóa (${skin.cost} Xu)`}
+      </button>
+    `;
+    const btn = card.querySelector('.skinBtn');
+    if (!equipped) {
+      btn.addEventListener('click', () => {
+        if (!unlocked) {
+          if (profile.currency < skin.cost) return;
+          profile.currency -= skin.cost;
+          profile.unlockedSkins.push(skin.id);
+        }
+        profile.equippedSkin = skin.id;
+        saveProfile();
+        // Section 4.1-4.2 follow-up: a persistent room (Arena/Team/KOTH/
+        // co-op Survival) never ends, so a player equipping mid-session
+        // needs to tell the server too, not just wait for their next join.
+        if (inRoom) socket.emit('equipSkin', skin.id);
+        renderSkinGrid();
+        refreshMenuTexts();
+      });
+    }
+    grid.appendChild(card);
+  }
+  upgradeListEl.appendChild(grid);
+}
+
 function renderGarage() {
   renderUpgradeCategoryTabs();
   garageCurrencyEl.textContent = profile.currency;
+  if (activeUpgradeCategory === 'skins') {
+    renderSkinGrid();
+    return;
+  }
   upgradeListEl.innerHTML = '';
   const nodes = UPGRADE_CATALOG.filter((n) => n.category === activeUpgradeCategory);
   for (const node of nodes) {
@@ -1872,17 +2421,85 @@ function tryUpgrade(nodeId) {
 }
 
 // ---------- Join / leave flow ----------
-function joinGame(opts) {
-  mode = opts.mode;
-  loginOverlay.classList.add('hidden');
-  socket.emit('join', {
+// ---------- Invite links (section 6.1) ----------
+// Lightweight by design: this game has no account/lobby system, so an
+// "invite" is just a URL carrying the same join params joinGame() already
+// sends -- a friend who opens it lands directly in that mode/team instead
+// of picking it from the menu. Only offered for the modes where landing on
+// a specific SIDE actually matters (Team/KOTH) or where "come play with me"
+// is the whole point (Survival co-op) -- Arena/Campaign have no such thing
+// to steer someone toward.
+function copyInviteLink(params, btnEl, defaultLabel) {
+  const url = new URL(location.href);
+  url.search = '';
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  const text = url.toString();
+  const onDone = () => {
+    btnEl.classList.add('copied');
+    btnEl.textContent = '✅ Đã sao chép link!';
+    setTimeout(() => {
+      btnEl.classList.remove('copied');
+      btnEl.textContent = defaultLabel;
+    }, 2000);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(onDone).catch(() => window.prompt('Sao chép link mời bạn:', text));
+  } else {
+    window.prompt('Sao chép link mời bạn:', text);
+  }
+}
+teamInviteBtnEl.addEventListener('click', () => copyInviteLink({ mode: 'team' }, teamInviteBtnEl, teamInviteBtnEl.textContent));
+kothInviteBtnEl.addEventListener('click', () => copyInviteLink({ mode: 'koth' }, kothInviteBtnEl, kothInviteBtnEl.textContent));
+endlessInviteBtnEl.addEventListener('click', () => copyInviteLink({ mode: 'survival', coop: '1' }, endlessInviteBtnEl, endlessInviteBtnEl.textContent));
+
+// If this page load came from an invite link, join that mode/team directly
+// instead of showing the main menu -- checked once, right after the player
+// has a name (existing profile, or one just entered on the name screen).
+// The URL is cleaned immediately after so a later refresh/back button
+// doesn't silently re-trigger the same auto-join.
+const inviteParams = new URLSearchParams(location.search);
+function tryAutoJoinFromInvite() {
+  const inviteMode = inviteParams.get('mode');
+  if (inviteMode !== 'team' && inviteMode !== 'koth' && inviteMode !== 'survival') return false;
+  const opts = { mode: inviteMode };
+  if (inviteMode === 'team' || inviteMode === 'koth') {
+    const team = inviteParams.get('team');
+    if (team === 'red' || team === 'blue') opts.team = team;
+  }
+  if (inviteMode === 'survival') opts.coop = inviteParams.get('coop') === '1';
+  history.replaceState(null, '', location.pathname);
+  joinGame(opts);
+  return true;
+}
+
+function buildJoinPayload(opts) {
+  return {
     name: profile.name,
     mode: opts.mode,
     stage: opts.stage,
+    team: opts.team,
+    coop: opts.coop,
     difficulty: profile.difficulty,
     loadout: profile.upgrades,
     perks: profile.perks,
-  });
+    skin: profile.equippedSkin,
+    sessionId,
+  };
+}
+
+function joinGame(opts) {
+  // Daily Survival (follow-up) reports its raw 'survivalDaily' mode to the
+  // SERVER (buildJoinPayload sends opts.mode as-is) so it can pick the
+  // right room/modifier, but the CLIENT's own `mode` normalizes to
+  // 'survival' so every existing HUD/gate keeps working unmodified --
+  // lastJoinWasDailySurvival is the one flag that remembers the difference.
+  mode = opts.mode === 'survivalDaily' ? 'survival' : opts.mode;
+  lastJoinWasDaily = opts.mode === 'daily';
+  lastJoinWasDailySurvival = opts.mode === 'survivalDaily';
+  lastJoinOpts = opts;
+  inRoom = true;
+  loginOverlay.classList.add('hidden');
+  socket.emit('join', buildJoinPayload(opts));
 }
 
 function startCampaign(stageId) {
@@ -1904,6 +2521,9 @@ let stageTransitionInFlight = false;
 function leaveRoomAndGoMenu() {
   if (stageTransitionInFlight) return;
   stageTransitionInFlight = true;
+  inRoom = false;
+  lastJoinOpts = null;
+  showConnStatus('stable');
   socket.emit('leaveRoom');
   resetGameState();
   hud.classList.remove('active');
@@ -1921,11 +2541,57 @@ function leaveAndRejoinCampaign(stageId) {
   startCampaign(stageId);
 }
 
+// Survival's Retry always rejoins solo (the result screen itself never
+// shows for co-op, since a co-op room's run never "finishes" — see
+// _getSurvivalStatus).
+function leaveAndRejoinSurvival() {
+  if (stageTransitionInFlight) return;
+  stageTransitionInFlight = true;
+  socket.emit('leaveRoom');
+  resetGameState();
+  joinGame({ mode: 'survival', coop: false });
+  // stageTransitionInFlight is released once the new room's first snapshot
+  // actually arrives — see the 'init' handler — same guard window
+  // leaveAndRejoinCampaign relies on, so a double-click can't double-join.
+}
+
+// Daily Survival integration (follow-up): mirrors leaveAndRejoinDaily's own
+// reasoning below -- a plain leaveAndRejoinSurvival() would silently drop
+// today's modifier/bonus reward on Retry. lastJoinWasDailySurvival (set in
+// joinGame) is the only client-side memory of "this run came from Daily".
+let lastJoinWasDailySurvival = false;
+function leaveAndRejoinDailySurvival() {
+  if (stageTransitionInFlight) return;
+  stageTransitionInFlight = true;
+  socket.emit('leaveRoom');
+  resetGameState();
+  joinGame({ mode: 'survivalDaily', coop: false });
+}
+
+// A Daily Challenge run reports mode:'campaign' to the server/HUD (see
+// index.js), so Retry can't just reuse leaveAndRejoinCampaign(stageId) —
+// that would silently drop the day's modifier (and its bonus reward) on
+// the retry. lastJoinWasDaily (set in joinGame) is the only client-side
+// memory of "this run came from the Daily entry point".
+let lastJoinWasDaily = false;
+function leaveAndRejoinDaily() {
+  if (stageTransitionInFlight) return;
+  stageTransitionInFlight = true;
+  socket.emit('leaveRoom');
+  resetGameState();
+  joinGame({ mode: 'daily' });
+}
+
 // ---------- UI wiring ----------
+function proceedPastLogin() {
+  if (!tryAutoJoinFromInvite()) showPanel('menu');
+}
+
 if (profile.name) {
   nameInputEl.value = profile.name;
   refreshMenuTexts();
-  showPanel('menu');
+  if (!profile.tutorialSeen) startTutorial(proceedPastLogin);
+  else proceedPastLogin();
 } else {
   showPanel('name');
 }
@@ -1940,7 +2606,8 @@ continueBtnEl.addEventListener('click', () => {
   saveProfile();
   loginStatusEl.textContent = '';
   refreshMenuTexts();
-  showPanel('menu');
+  if (!profile.tutorialSeen) startTutorial(proceedPastLogin);
+  else proceedPastLogin();
 });
 nameInputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') continueBtnEl.click();
@@ -1954,11 +2621,46 @@ changeNameLinkEl.addEventListener('click', (e) => {
 });
 
 btnArenaEl.addEventListener('click', () => joinGame({ mode: 'arena' }));
-btnTeamEl.addEventListener('click', () => joinGame({ mode: 'team' }));
+btnTeamEl.addEventListener('click', () => {
+  renderTeamSelect();
+  showPanel('teamSelect');
+});
+btnTeamRedEl.addEventListener('click', () => joinGame({ mode: 'team', team: 'red' }));
+btnTeamBlueEl.addEventListener('click', () => joinGame({ mode: 'team', team: 'blue' }));
+btnTeamAutoEl.addEventListener('click', () => joinGame({ mode: 'team' }));
+teamSelectBackEl.addEventListener('click', () => showPanel('menu'));
+btnKothEl.addEventListener('click', () => {
+  renderKothSelect();
+  showPanel('kothSelect');
+});
+btnKothRedEl.addEventListener('click', () => joinGame({ mode: 'koth', team: 'red' }));
+btnKothBlueEl.addEventListener('click', () => joinGame({ mode: 'koth', team: 'blue' }));
+btnKothAutoEl.addEventListener('click', () => joinGame({ mode: 'koth' }));
+kothSelectBackEl.addEventListener('click', () => showPanel('menu'));
 btnCampaignEl.addEventListener('click', () => {
   renderStages();
   showPanel('stages');
 });
+btnEndlessEl.addEventListener('click', () => {
+  renderEndlessSelect();
+  showPanel('endlessSelect');
+});
+btnEndlessSoloEl.addEventListener('click', () => joinGame({ mode: 'survival', coop: false }));
+btnEndlessCoopEl.addEventListener('click', () => joinGame({ mode: 'survival', coop: true }));
+endlessSelectBackEl.addEventListener('click', () => showPanel('menu'));
+btnDailyEl.addEventListener('click', () => {
+  renderDaily();
+  showPanel('daily');
+});
+btnDailyStartEl.addEventListener('click', () => joinGame({ mode: 'daily' }));
+btnDailySurvivalSoloEl.addEventListener('click', () => joinGame({ mode: 'survivalDaily', coop: false }));
+btnDailySurvivalCoopEl.addEventListener('click', () => joinGame({ mode: 'survivalDaily', coop: true }));
+dailyBackEl.addEventListener('click', () => showPanel('menu'));
+btnAchievementsEl.addEventListener('click', () => {
+  renderAchievements();
+  showPanel('achievements');
+});
+achievementsBackEl.addEventListener('click', () => showPanel('menu'));
 btnGarageEl.addEventListener('click', () => {
   renderGarage();
   showPanel('garage');
@@ -1986,7 +2688,10 @@ btnStageMenuEl.addEventListener('click', () => {
 });
 btnStageRetryEl.addEventListener('click', () => {
   disableStageResultButtons();
-  leaveAndRejoinCampaign(latestStageStatus.stageId);
+  if (mode === 'survival' && lastJoinWasDailySurvival) leaveAndRejoinDailySurvival();
+  else if (mode === 'survival') leaveAndRejoinSurvival();
+  else if (lastJoinWasDaily) leaveAndRejoinDaily();
+  else leaveAndRejoinCampaign(latestStageStatus.stageId);
 });
 // Uses the SERVER's own `nextStageId` (see Game.js#getStageStatus) instead
 // of the client re-deriving "+1" itself — one authoritative place computes
@@ -2019,11 +2724,42 @@ socket.on('connect_error', () => {
 
 socket.on('joinError', (err) => {
   console.warn('joinError', err && err.message);
+  inRoom = false;
   resetGameState();
   hud.classList.remove('active');
   refreshMenuTexts();
   showPanel('menu');
   stageTransitionInFlight = false; // the attempted transition failed -- release the guard so the player can retry
+});
+
+// Reconnect (section 3.1-3.3): Socket.IO's own client already retries the
+// transport automatically -- this just decides what to DO once it's back:
+// silently resume the same match by re-sending the exact same join (now
+// carrying the same sessionId, which is what lets the server recognize and
+// resume the still-pending player instead of treating this as a stranger).
+let everConnected = false;
+socket.on('connect', () => {
+  if (!everConnected) {
+    everConnected = true;
+    return;
+  }
+  if (inRoom && lastJoinOpts) {
+    socket.emit('join', buildJoinPayload(lastJoinOpts));
+  } else {
+    showConnStatus('stable');
+  }
+});
+socket.on('disconnect', () => {
+  if (inRoom) showConnStatus('reconnecting');
+});
+socket.on('reconnect_failed', () => {
+  if (!inRoom) return;
+  showConnStatus('failed');
+  inRoom = false;
+  resetGameState();
+  hud.classList.remove('active');
+  refreshMenuTexts();
+  showPanel('menu');
 });
 
 // ---------- Game state sync ----------
@@ -2032,7 +2768,22 @@ function applySnapshot(snapshot, isInit) {
   const selfTeam = (snapshot.players.find((sp) => sp.id === selfId) || {}).team || null;
   for (const p of snapshot.players) {
     seen.add(p.id);
-    const e = ensureEntity(p.id, p.color);
+    // Tank skins (section 4.1-4.2 follow-up): the server now echoes back
+    // each human player's validated skinId in the snapshot (see Game.js's
+    // addPlayer/equipSkin/snapshot), so every client can render EVERY
+    // player's chosen skin, not just its own -- never overrides Team
+    // Deathmatch/KOTH's red/blue coloring, since there that color is a
+    // gameplay-relevant friend/foe signal, not just cosmetic identity.
+    let entityColor = p.color;
+    if (mode !== 'team' && mode !== 'koth' && p.skinId) {
+      const skin = SKIN_CATALOG.find((s) => s.id === p.skinId);
+      if (skin && skin.hullColor != null) entityColor = skin.hullColor;
+    }
+    const e = ensureEntity(p.id, entityColor);
+    if (e.appliedColor !== entityColor) {
+      recolorTankMesh(e.mesh, entityColor);
+      e.appliedColor = entityColor;
+    }
     e.name = p.name;
     e.team = p.team || null;
     e.isBot = !!p.isBot;
@@ -2043,6 +2794,8 @@ function applySnapshot(snapshot, isInit) {
     e.bossPhase = p.bossPhase || 0;
     e.bossEnraged = !!p.bossEnraged;
     e.bossInvuln = !!p.bossInvuln;
+    e.weakPoint = p.weakPoint || null;
+    if (e.isBoss && e.weakPoint) ensureWeakPointMesh(e);
     const isTeammate = !!(selfTeam && e.team === selfTeam && p.id !== selfId);
     e.nameTagEl.className =
       'nameTag' +
@@ -2113,13 +2866,19 @@ function updateScoreboard(players) {
 // Team Deathmatch scoreboard: two sections, each headed by the side's total
 // kill count (its "team score"), players sorted by personal kills within.
 function updateTeamScoreboard(players) {
+  // King of the Hill (section 5.1-5.3) shows the actual zone-capture score
+  // as each side's total (the real win condition there), not kill count --
+  // everything else about the scoreboard (per-player rows, sorting) is
+  // identical to plain Team Deathmatch, which is why this single function
+  // already serves both (updateScoreboard routes here for ANY room where
+  // players carry a `.team`, koth included).
   const section = (team, label, cssClass) => {
     const side = players.filter((p) => p.team === team).sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
-    const score = side.reduce((sum, p) => sum + p.kills, 0);
-    let html = `<div class="hdr ${cssClass}">${label}: ${score} điểm</div>`;
+    const score = mode === 'koth' && latestKothData ? Math.round(latestKothData[team]) : side.reduce((sum, p) => sum + p.kills, 0);
+    let html = `<div class="hdr ${cssClass}">${label}: ${score}${mode === 'koth' ? `/${latestKothData ? latestKothData.target : '?'}` : ' điểm'}</div>`;
     for (const p of side.slice(0, 6)) {
       const cls = p.id === selfId ? 'self' : '';
-      html += `<div class="row ${cls}"><span>${escapeHtml(p.name)}</span><span>${p.kills}/${p.deaths}</span></div>`;
+      html += `<div class="row ${cls}"><span>${escapeHtml(p.name)}</span><span>${p.kills}/${p.deaths}/${p.assists || 0}</span></div>`;
     }
     return html;
   };
@@ -2127,6 +2886,8 @@ function updateTeamScoreboard(players) {
 }
 
 socket.on('init', (data) => {
+  inRoom = true;
+  showConnStatus('stable');
   selfId = data.selfId;
   mode = data.mode;
   arenaHalfSize = data.arenaHalfSize;
@@ -2135,6 +2896,9 @@ socket.on('init', (data) => {
   latestBulletData = data.snapshot.bullets;
   latestPickupData = data.snapshot.pickups || [];
   latestZoneData = data.snapshot.zones || [];
+  latestMineData = data.snapshot.mines || [];
+  latestHazardData = data.snapshot.hazards || [];
+  latestKothData = data.snapshot.koth || null;
 
   if (!worldBuilt) {
     buildGround();
@@ -2145,7 +2909,11 @@ socket.on('init', (data) => {
   }
 
   applySnapshot(data.snapshot, true);
-  campaignBarEl.classList.toggle('hidden', mode !== 'campaign');
+  campaignBarEl.classList.toggle('hidden', mode !== 'campaign' && mode !== 'survival');
+  // Quick ping (section 6.2): a signal to OTHER players, so it's only
+  // useful where there are other humans around to see it -- never in a
+  // solo Campaign/Daily run.
+  pingRowEl.classList.toggle('hidden', mode === 'campaign');
   loginOverlay.classList.add('hidden');
   hud.classList.add('active');
   // The new room's first snapshot has genuinely arrived -- only NOW is a
@@ -2157,7 +2925,15 @@ socket.on('init', (data) => {
   // via this exact 'init' event — one hook covers all four cases from
   // section 10. Arena/team rooms have no such screen server-side
   // (combatActive starts true there), so nothing is shown for them.
-  if (mode === 'campaign') showStageIntro(latestStageStatus);
+  // Reconnect (section 3.1-3.3): 'init' can now also fire mid-combat (a
+  // resumed session), where combatActive is already true -- showing the
+  // "waiting for confirmation" screen again would wrongly interrupt an
+  // already-running fight, so this only ever shows pre-combat.
+  // Pre-survival confirmation (section 7) reuses the exact same screen as
+  // Campaign's pre-stage confirm -- Survival's co-op room is already active
+  // from the server (see RoomManager), so this only ever fires for a fresh
+  // solo run, never interrupting an ongoing shared match.
+  if ((mode === 'campaign' || mode === 'survival') && latestStageStatus && !latestStageStatus.combatActive) showStageIntro(latestStageStatus);
   else stageIntroOverlayEl.classList.add('hidden');
 });
 
@@ -2176,12 +2952,19 @@ socket.on('state', (msg) => {
   latestBulletData = msg.snapshot.bullets;
   latestPickupData = msg.snapshot.pickups || [];
   latestZoneData = msg.snapshot.zones || [];
+  latestMineData = msg.snapshot.mines || [];
+  latestHazardData = msg.snapshot.hazards || [];
+  latestKothData = msg.snapshot.koth || null;
   latestStageStatus = msg.stageStatus || null;
 
   for (const ev of msg.events) {
     if (ev.type === 'hit' || ev.type === 'kill') {
       const attackerId = ev.type === 'kill' ? ev.killerId : ev.attackerId;
       const victim = entities.get(ev.victimId);
+      // Achievement tracking (section 4.3): taking any real damage breaks a
+      // "no damage" kill streak, regardless of whether this particular
+      // event is a hit or a kill.
+      if (ev.victimId === selfId && ev.amount > 0) profile.stats.noDamageKillStreak = 0;
       if (victim && ev.amount > 0) {
         const kind = ev.victimId === selfId ? 'taken' : attackerId === selfId ? 'dealt' : 'neutral';
         spawnCombatNumber(victim.target.x, victim.target.z, '-' + ev.amount, kind);
@@ -2196,6 +2979,22 @@ socket.on('state', (msg) => {
     if (ev.type === 'kill') {
       const victim = entities.get(ev.victimId);
       if (victim) spawnBurst(victim.target.x, victim.target.z);
+      // Achievement tracking (section 4.3) -- see ACHIEVEMENTS/defaultStats.
+      if (ev.killerId === selfId) {
+        profile.stats.totalKills++;
+        profile.stats.noDamageKillStreak++;
+        if (victim && victim.isBoss) profile.stats.bossKills++;
+        if (mode === 'team' || mode === 'koth') profile.stats.tdmKills++;
+        const self = entities.get(selfId);
+        if (self && self.weaponType !== 'normal') profile.stats.specialAmmoKills++;
+        // PvP kill reward (section 5.5) -- Arena/Team/KOTH never had ANY
+        // currency reward before this; kept deliberately small (Campaign's
+        // stage-clear reward stays the main income) so PvP doesn't quietly
+        // out-earn playing the actual campaign.
+        if (mode === 'arena' || mode === 'team' || mode === 'koth') profile.currency += PVP_KILL_REWARD;
+        checkAchievements();
+        saveProfile();
+      }
       const killerLabel = ev.killerId === selfId ? 'Bạn' : escapeHtml(ev.killerName);
       const victimLabel = ev.victimId === selfId ? 'Bạn' : escapeHtml(ev.victimName);
       // Sentinel's execution shot (section 20) gets a distinct, more
@@ -2224,6 +3023,52 @@ socket.on('state', (msg) => {
       spawnBurst(ev.x, ev.z);
       const mult = distVolMult(ev.x, ev.z);
       if (mult > 0.03) Sound.explosion(mult, false);
+    } else if (ev.type === 'ping') {
+      // Team-restricted visibility (section 6.2): the server broadcasts to
+      // the whole room like every other event, but a ping is a tactical
+      // signal, not public chat -- only render it for the sender's own
+      // team (or everyone, in a mode with no teams at all).
+      const self = entities.get(selfId);
+      const visible = !ev.team || !self || !self.team || self.team === ev.team;
+      if (!visible) continue;
+      const meta = PING_META[ev.kind];
+      if (!meta) continue;
+      activePings.push({ x: ev.x, z: ev.z, kind: ev.kind, expiresAt: performance.now() + 4000 });
+      spawnCombatNumber(ev.x, ev.z, `${meta.icon} ${meta.label}`, 'ping');
+      if (ev.playerId !== selfId) {
+        addKillfeedEntry(`${meta.icon} <span class="k">${escapeHtml(ev.playerName)}</span>: ${escapeHtml(meta.label)}`);
+        const mult = distVolMult(ev.x, ev.z);
+        if (mult > 0.03) Sound.minionWarn();
+      }
+    } else if (ev.type === 'kothWin') {
+      const label = ev.team === 'red' ? '🔴 Đội Đỏ' : '🔵 Đội Xanh';
+      addKillfeedEntry(`🏆 ${label} đã chiếm được điểm cao nhất!`);
+      Sound.stageClear();
+    } else if (ev.type === 'assist') {
+      if (ev.playerId === selfId) {
+        addKillfeedEntry(`🤝 Bạn đã hỗ trợ hạ <span class="v">${escapeHtml(ev.victimName)}</span>`);
+        if (mode === 'arena' || mode === 'team' || mode === 'koth') {
+          profile.currency += PVP_ASSIST_REWARD;
+          saveProfile();
+        }
+      }
+    } else if (ev.type === 'optionalObjectiveSpawn') {
+      addKillfeedEntry(`🔍 Nhiệm vụ phụ: ${ev.label}`);
+    } else if (ev.type === 'optionalObjectiveDone') {
+      addKillfeedEntry(`✅ Hoàn thành nhiệm vụ phụ: ${ev.label} (+${ev.bonusReward} Xu)`);
+      Sound.pickup();
+    } else if (ev.type === 'weakPointHit') {
+      // Purely a feedback layer — the extra damage itself already landed via
+      // the normal 'hit'/'kill' event just above; this just tells the
+      // player THAT it was a weak-point hit, same spirit as a crit callout.
+      spawnCombatNumber(ev.x, ev.z, 'ĐIỂM YẾU!', 'weakpoint');
+      const mult = distVolMult(ev.x, ev.z);
+      if (mult > 0.03) Sound.hit(Math.min(1, mult * 1.4));
+    } else if (ev.type === 'mineTrigger') {
+      // Same "dodge NOW" alert the boss attack telegraph uses — a tripped
+      // mine is exactly that situation. Only for mines close enough to
+      // actually threaten this player, so distant traps aren't audible noise.
+      if (distVolMult(ev.x, ev.z, 22) > 0.05) Sound.bossTelegraphTick();
     } else if (ev.type === 'shieldBreak') {
       const holder = entities.get(ev.playerId);
       if (holder) {
@@ -2246,6 +3091,30 @@ socket.on('state', (msg) => {
     } else if (ev.type === 'bossSpawn') {
       addKillfeedEntry(`👑 <span class="v">${escapeHtml(ev.name)}</span> đã xuất hiện!`);
       Sound.bossSpawn();
+      if (mode === 'survival') showSurvivalWarning(`⚠ BOSS INCOMING — ${ev.name}`, 3500);
+    } else if (ev.type === 'survivalWave') {
+      addKillfeedEntry(`⚔️ Đợt sóng ${ev.wave} bắt đầu!`);
+      // Elite incoming (section 19/45): no dedicated server event for this
+      // -- the wave's bots are already in `entities` by the time events are
+      // processed (applySnapshot ran first), so just check what actually
+      // spawned rather than adding a second wave-composition payload.
+      let sawElite = false;
+      for (const e of entities.values()) {
+        if (e.isBot && e.isElite && e.alive) { sawElite = true; break; }
+      }
+      if (sawElite) showSurvivalWarning('⚠ ELITE INCOMING', 2200);
+    } else if (ev.type === 'survivalMiniboss') {
+      addKillfeedEntry(`⚠ <span class="v">MINIBOSS</span> đã xuất hiện!`);
+      Sound.bossSpawn();
+      showSurvivalWarning('⚠ MINIBOSS INCOMING', 3000);
+    } else if (ev.type === 'dailyBonus') {
+      // Daily Survival co-op (follow-up): the room-wide per-wave bonus (see
+      // Game.js's _updateSurvivalWaves) reaches every client in the room,
+      // so everyone credits their OWN profile the same amount independently
+      // — same client-trusted-currency model as the rest of this project.
+      profile.currency += ev.amount;
+      saveProfile();
+      addKillfeedEntry(`📅 +${ev.amount} Xu — Thử thách hàng ngày!`);
     } else if (ev.type === 'bossPhase') {
       addKillfeedEntry(`⚔️ ${escapeHtml(ev.name)} bước sang giai đoạn ${ev.phase + 1}!`);
       Sound.bossPhase();
@@ -2349,14 +3218,22 @@ function showStageIntro(status) {
 
   const meta = STAGES_META.find((s) => s.id === status.stageId) || null;
   const objLabel = OBJECTIVE_LABELS[(status.objective && status.objective.type) || ''] || '';
+  const isSurvival = mode === 'survival';
   stageIntroTitleEl.textContent = (meta && meta.isBoss ? '👑 ' : '') + status.stageName;
-  const lines = [
-    `Chương ${status.chapter}${meta && meta.theme ? ' — ' + escapeHtml(meta.theme.name) : ''}`,
-    `Mục tiêu: ${objLabel}`,
-    `Độ khó: ${(DIFFICULTY_META[profile.difficulty] || DIFFICULTY_META.normal).label}`,
-  ];
+  const lines = isSurvival
+    ? [
+        `Mục tiêu: ${objLabel}`,
+        `Độ khó: ${(DIFFICULTY_META[profile.difficulty] || DIFFICULTY_META.normal).label}`,
+        'Kẻ địch, tốc độ hồi sóng, tỉ lệ tinh nhuệ và tần suất boss sẽ tăng dần theo thời gian.',
+      ]
+    : [
+        `Chương ${status.chapter}${meta && meta.theme ? ' — ' + escapeHtml(meta.theme.name) : ''}`,
+        `Mục tiêu: ${objLabel}`,
+        `Độ khó: ${(DIFFICULTY_META[profile.difficulty] || DIFFICULTY_META.normal).label}`,
+      ];
   if (meta && meta.isBoss) lines.push(`👑 Trùm: ${escapeHtml(meta.bossName || 'Trùm')}`);
   else if (meta) lines.push(`${meta.botCount} địch`);
+  if (status.dailyModifier) lines.push(`📅 Thử thách hàng ngày — ${escapeHtml(status.dailyModifier.label)}: ${escapeHtml(status.dailyModifier.desc)}`);
   stageIntroSubEl.innerHTML = lines.join('<br>');
 
   stageIntroOverlayEl.classList.remove('hidden');
@@ -2395,12 +3272,65 @@ function showStageResult(status) {
     // — one authoritative computation of "what comes next", so it can never
     // disagree with what the Next-stage button itself will request.
     profile.unlockedStage = Math.max(profile.unlockedStage, status.nextStageId || status.stageId);
+    // Achievement tracking (section 4.3): a chapter counts as "cleared"
+    // once its BOSS stage (stageInChapter 8) clears -- the same signal
+    // STAGES_META already carries for the stage-select grid's crown icon.
+    const clearedMeta = STAGES_META.find((s) => s.id === status.stageId);
+    if (clearedMeta && clearedMeta.isBoss) {
+      profile.stats.maxChapterCleared = Math.max(profile.stats.maxChapterCleared, status.chapter);
+      if (status.chapter === 5 && ['hard', 'veryhard', 'nightmare'].includes(profile.difficulty)) {
+        profile.stats.chapter5HardOrAbove = true;
+      }
+    }
+    checkAchievements();
     saveProfile();
     stageResultTitleEl.textContent = '🎉 Hoàn thành!';
-    stageResultSubEl.textContent = `${status.stageName} — Nhận +${status.reward} Xu`;
+    const opt = status.optionalObjective;
+    const optSuffix = opt && opt.done ? ` (gồm +${opt.bonusReward} Xu nhiệm vụ phụ)` : '';
+    const dailySuffix = status.dailyModifier ? ` (gồm +${status.dailyModifier.bonusReward} Xu thử thách hàng ngày)` : '';
+    stageResultSubEl.textContent = `${status.stageName} — Nhận +${status.reward} Xu${optSuffix}${dailySuffix}`;
     btnStageNextEl.classList.toggle('hidden', status.isLastStage || !status.nextStageId);
     renderPerkPick();
     Sound.stageClear();
+  } else if (mode === 'survival') {
+    // Survival never "clears" (see _getSurvivalStatus) — a solo run only
+    // ever ends by dying, and always pays SOME reward for waves survived
+    // (possibly 0 on an instant death), so it gets its own copy rather than
+    // reusing Campaign's "💥 Thất bại" framing.
+    profile.currency += status.reward;
+    const survivalStats = status.survivalStats || { kills: 0, eliteKills: 0, minibossKills: 0, bossKills: 0, score: 0 };
+    const wave = (status.objective && status.objective.wave) || 0;
+    const timeS = (status.objective && status.objective.elapsedS) || 0;
+
+    // Personal best (section 37-38) + Achievement integration (section 62)
+    // -- both read the SAME cumulative-progress fields on profile.stats, so
+    // a survival run contributes to the exact same trackers/achievements
+    // panel every other mode already uses, not a second system.
+    const best = profile.survivalBest;
+    const isNewBest = wave > best.wave || (wave === best.wave && survivalStats.score > best.score);
+    if (wave > best.wave) best.wave = wave;
+    if (timeS > best.time) best.time = timeS;
+    if (survivalStats.score > best.score) best.score = survivalStats.score;
+    profile.stats.survivalMaxTimeS = Math.max(profile.stats.survivalMaxTimeS, timeS);
+    profile.stats.survivalMaxWave = Math.max(profile.stats.survivalMaxWave, wave);
+    profile.stats.survivalBossKillsTotal += survivalStats.bossKills;
+    checkAchievements();
+    saveProfile();
+
+    perkPickSectionEl.classList.add('hidden');
+    stageResultTitleEl.textContent = '💀 SINH TỒN KẾT THÚC';
+    const mm = String(Math.floor(timeS / 60)).padStart(2, '0');
+    const ss = String(timeS % 60).padStart(2, '0');
+    const dailySuffix = status.dailyModifier ? ` (gồm +${status.dailyModifier.bonusReward} Xu thử thách hàng ngày)` : '';
+    const lines = [
+      `Thời gian: ${mm}:${ss} · Đợt sóng: ${wave}`,
+      `Hạ gục: ${survivalStats.kills} (Tinh nhuệ: ${survivalStats.eliteKills}, Miniboss: ${survivalStats.minibossKills}, Boss: ${survivalStats.bossKills})`,
+      `Điểm: ${survivalStats.score.toLocaleString('vi-VN')} · Thưởng: +${status.reward} Xu${dailySuffix}`,
+    ];
+    if (isNewBest) lines.push('🏆 KỶ LỤC CÁ NHÂN MỚI!');
+    stageResultSubEl.innerHTML = lines.join('<br>');
+    btnStageNextEl.classList.add('hidden');
+    Sound.stageFailed();
   } else {
     perkPickSectionEl.classList.add('hidden');
     stageResultTitleEl.textContent = '💥 Thất bại';
@@ -2434,6 +3364,20 @@ const joystickVec = { x: 0, y: 0 }; // x = strafe right, y = forward, both -1..1
 // "stop sprint" action needed.
 let sprintHeld = false;
 
+// Quick ping (section 6.2): a local-only cooldown guard (mirrors the
+// server's own, stricter one) purely so a held key / rapid re-click
+// doesn't flood the socket with pings the server would drop anyway.
+let lastPingSentAt = 0;
+function sendPing(kind) {
+  const now = performance.now();
+  if (now - lastPingSentAt < PING_COOLDOWN_MS_CLIENT) return;
+  lastPingSentAt = now;
+  socket.emit('ping', kind);
+}
+for (const [kind, btn] of Object.entries(pingButtons)) {
+  btn.addEventListener('click', () => sendPing(kind));
+}
+
 window.addEventListener('keydown', (e) => {
   keys.add(e.code);
   if (e.code === 'Space') firing = true;
@@ -2442,6 +3386,10 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     tryToggleLock();
   }
+  // Quick ping (section 6.2): 1-6, no typing/menu required -- matches the
+  // touch-friendly on-screen row (#pingRow) 1:1, same six kinds either way.
+  const pingDigitKind = { Digit1: 'attack', Digit2: 'defend', Digit3: 'enemy', Digit4: 'help', Digit5: 'incoming', Digit6: 'target' }[e.code];
+  if (pingDigitKind && hud.classList.contains('active')) sendPing(pingDigitKind);
 });
 window.addEventListener('keyup', (e) => {
   keys.delete(e.code);
@@ -2994,6 +3942,15 @@ function updateEntityMeshes() {
     turretPivot.rotation.y = e.render.turretRot;
     shieldMesh.visible = e.armorActive && e.alive;
     invulnMesh.visible = e.invulnActive && e.alive;
+
+    if (e.mesh.weakPointMesh) {
+      const wpVisible = e.alive && !!(e.weakPoint && e.weakPoint.exposed);
+      e.mesh.weakPointMesh.visible = wpVisible;
+      if (wpVisible) {
+        const pulse = 1 + Math.sin(performance.now() / 160) * 0.18;
+        e.mesh.weakPointMesh.scale.setScalar(pulse);
+      }
+    }
     if (invulnMesh.visible) {
       const pulse = 1 + Math.sin(performance.now() / 120) * 0.06;
       invulnMesh.scale.setScalar(pulse);
@@ -3285,6 +4242,218 @@ function syncZones() {
   }
 }
 
+// ---------- Deployed mines ----------
+// Fairness (section 11): a mine is always visible to everyone, and its
+// blinking light doubles as the "when" cue — a slow amber pulse while armed,
+// a fast red one during the short telegraph right before it detonates.
+const MINE_COLOR_ARMED = 0xff8a3d;
+const MINE_COLOR_TRIGGERED = 0xff2d2d;
+
+function createMineMesh() {
+  const group = new THREE.Group();
+
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.42, 0.5, 0.22, 12),
+    new THREE.MeshStandardMaterial({ color: 0x2b2b33, roughness: 0.8, metalness: 0.3 })
+  );
+  body.position.y = 0.11;
+  group.add(body);
+
+  const light = new THREE.Mesh(
+    new THREE.SphereGeometry(0.13, 10, 8),
+    new THREE.MeshBasicMaterial({ color: MINE_COLOR_ARMED })
+  );
+  light.position.y = 0.3;
+  group.add(light);
+
+  // Ground ring showing the actual blast radius, so the danger area the
+  // player sees always matches the area the server damages.
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.92, 1, 28),
+    new THREE.MeshBasicMaterial({
+      color: MINE_COLOR_ARMED,
+      transparent: true,
+      opacity: 0.35,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.05;
+  group.add(ring);
+
+  scene.add(group);
+  return { group, body, light, ring };
+}
+
+function syncMines() {
+  const seen = new Set();
+  for (const m of latestMineData) {
+    seen.add(m.id);
+    let entry = mineMeshes.get(m.id);
+    if (!entry) {
+      entry = createMineMesh();
+      mineMeshes.set(m.id, entry);
+    }
+    entry.x = m.x;
+    entry.z = m.z;
+    entry.radius = m.radius;
+    entry.state = m.state;
+  }
+  for (const [id, entry] of mineMeshes) {
+    if (!seen.has(id)) {
+      scene.remove(entry.group);
+      disposeObject3D(entry.group);
+      mineMeshes.delete(id);
+    }
+  }
+}
+
+function updateMinesVisual(tSec) {
+  for (const entry of mineMeshes.values()) {
+    entry.group.position.set(entry.x, 0, entry.z);
+    const triggered = entry.state === 'triggered';
+    const color = triggered ? MINE_COLOR_TRIGGERED : MINE_COLOR_ARMED;
+    entry.light.material.color.setHex(color);
+    entry.ring.material.color.setHex(color);
+    // The ring only ever scales in X/Z — the children sit at a small local Y
+    // offset that a uniform scale would lift off the ground (same reason
+    // updateZonesVisual scales this way).
+    entry.ring.scale.set(entry.radius, entry.radius, 1);
+    const blinkSpeed = triggered ? 18 : 4;
+    const blink = 0.5 + Math.sin(tSec * blinkSpeed) * 0.5;
+    entry.light.material.opacity = 1;
+    entry.light.scale.setScalar(triggered ? 1 + blink * 0.6 : 0.85 + blink * 0.3);
+    entry.ring.material.opacity = (triggered ? 0.45 : 0.18) + blink * (triggered ? 0.45 : 0.14);
+  }
+}
+
+// ---------- Environmental hazards (section 2.1-2.2) ----------
+// Same flat-disc-plus-ring language as zones/gravity, so a new hazard type
+// reads as "one more thing in that same visual family" instead of a
+// bespoke effect — only the color/pulse behavior differs per phase.
+const HAZARD_VISUALS = {
+  toxic: { color: 0x8cff5c, icon: '☣️' },
+  fire: { color: 0xff6a1a, icon: '🔥' },
+  laser: { color: 0xff2d2d, icon: '⚡' },
+  piston: { color: 0xb0b0b0, icon: '🔨' },
+};
+
+function createHazardMesh(type) {
+  const meta = HAZARD_VISUALS[type] || HAZARD_VISUALS.toxic;
+  const group = new THREE.Group();
+  const discMat = new THREE.MeshBasicMaterial({
+    color: meta.color,
+    transparent: true,
+    opacity: 0.22,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 28), discMat);
+  disc.rotation.x = -Math.PI / 2;
+  disc.position.y = 0.07;
+  group.add(disc);
+
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: meta.color,
+    transparent: true,
+    opacity: 0.55,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.94, 1, 32), ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.09;
+  group.add(ring);
+
+  scene.add(group);
+  return { group, disc, ring };
+}
+
+function syncHazards() {
+  const seen = new Set();
+  latestHazardData.forEach((hz, i) => {
+    seen.add(i);
+    let entry = hazardMeshes.get(i);
+    if (!entry) {
+      entry = createHazardMesh(hz.type);
+      hazardMeshes.set(i, entry);
+    }
+    entry.x = hz.x;
+    entry.z = hz.z;
+    entry.radius = hz.radius;
+    entry.type = hz.type;
+    entry.phase = hz.phase;
+  });
+  for (const [i, entry] of hazardMeshes) {
+    if (!seen.has(i)) {
+      scene.remove(entry.group);
+      disposeObject3D(entry.group);
+      hazardMeshes.delete(i);
+    }
+  }
+}
+
+function updateHazardsVisual(tSec) {
+  for (const entry of hazardMeshes.values()) {
+    entry.group.position.set(entry.x, 0, entry.z);
+    entry.group.scale.set(entry.radius, 1, entry.radius);
+    // toxic/fire are always "active" — a slow steady breathe. laser/piston
+    // read very differently per phase: idle = barely visible, telegraph =
+    // fast urgent pulse (dodge NOW), active = solid bright danger.
+    if (entry.phase === 'idle') {
+      entry.disc.material.opacity = 0.05;
+      entry.ring.material.opacity = 0.15;
+    } else if (entry.phase === 'telegraph') {
+      const pulse = 0.5 + Math.sin(tSec * 14) * 0.5;
+      entry.disc.material.opacity = 0.15 + pulse * 0.25;
+      entry.ring.material.opacity = 0.4 + pulse * 0.5;
+    } else {
+      const pulse = 1 - 0.15 + Math.sin(tSec * 3) * 0.15;
+      entry.disc.material.opacity = 0.28 * pulse;
+      entry.ring.material.opacity = 0.75 * pulse;
+    }
+  }
+}
+
+// ---------- King of the Hill capture zone (section 5.1-5.3) ----------
+let kothZoneMesh = null;
+function ensureKothZoneMesh() {
+  if (kothZoneMesh) return kothZoneMesh;
+  const group = new THREE.Group();
+  const discMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false });
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(1, 40), discMat);
+  disc.rotation.x = -Math.PI / 2;
+  disc.position.y = 0.06;
+  group.add(disc);
+  const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.96, 1, 48), ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.08;
+  group.add(ring);
+  scene.add(group);
+  kothZoneMesh = { group, disc, ring };
+  return kothZoneMesh;
+}
+const KOTH_ZONE_COLORS = { red: 0xe74c3c, blue: 0x3498db, contested: 0xffd166, none: 0xffffff };
+function updateKothZoneVisual(tSec) {
+  if (!latestKothData) {
+    if (kothZoneMesh) kothZoneMesh.group.visible = false;
+    return;
+  }
+  const m = ensureKothZoneMesh();
+  m.group.visible = true;
+  const z = latestKothData.zone;
+  m.group.position.set(z.x, 0, z.z);
+  m.group.scale.set(z.radius, 1, z.radius);
+  const colorKey = latestKothData.controlling === 'red' || latestKothData.controlling === 'blue' ? latestKothData.controlling : latestKothData.controlling === 'contested' ? 'contested' : 'none';
+  const color = KOTH_ZONE_COLORS[colorKey];
+  m.disc.material.color.setHex(color);
+  m.ring.material.color.setHex(color);
+  const pulse = colorKey === 'contested' ? 0.5 + Math.sin(tSec * 8) * 0.5 : 1;
+  m.ring.material.opacity = 0.4 + pulse * 0.3;
+}
+
 function updateZonesVisual(tSec) {
   for (const entry of zoneMeshes.values()) {
     entry.group.position.set(entry.x, 0, entry.z);
@@ -3312,12 +4481,55 @@ const SPRINT_FOV_BONUS = 6; // subtle widen while sprinting — a "feel" of spee
 // never triggers this. Kept deliberately modest (a moderate FOV drop plus
 // a slight lean-in distance, both eased) so the player still reads the
 // map/surroundings instead of tunneling in like binoculars.
+// ---------- Spectator mode (section 5.4) ----------
+// Only meaningful where death is temporary (respawn-based PvP: Arena/Team/
+// KOTH/Survival-coop) -- a solo Campaign/Survival death ends the run
+// outright (the result overlay takes over almost immediately), so there's
+// no lingering "waiting to respawn" window to spectate through there.
+let spectateTargetId = null;
+
+function spectateCandidates() {
+  const self = entities.get(selfId);
+  if (!self) return [];
+  const list = [];
+  for (const [id, e] of entities) {
+    if (id === selfId || !e.alive || e.isBot) continue;
+    if ((mode === 'team' || mode === 'koth') && e.team !== self.team) continue;
+    list.push({ id, e });
+  }
+  return list;
+}
+
+function pickSpectateTarget(step) {
+  const candidates = spectateCandidates();
+  if (candidates.length === 0) {
+    spectateTargetId = null;
+    spectateRowEl.classList.add('hidden');
+    return;
+  }
+  spectateRowEl.classList.remove('hidden');
+  let idx = candidates.findIndex((c) => c.id === spectateTargetId);
+  idx = idx === -1 ? 0 : (idx + step + candidates.length) % candidates.length;
+  spectateTargetId = candidates[idx].id;
+  spectateLabelEl.textContent = `👁️ Đang xem: ${escapeHtml(candidates[idx].e.name)}`;
+}
+
+spectatePrevBtnEl.addEventListener('click', () => pickSpectateTarget(-1));
+spectateNextBtnEl.addEventListener('click', () => pickSpectateTarget(1));
+
 function updateCamera(dt) {
   const self = entities.get(selfId);
   if (!self) return;
-  const yaw = self.render.turretRot;
-  const targetX = self.render.x;
-  const targetZ = self.render.z;
+  // While dead in a respawn-based mode, follow the current spectate target
+  // (see pickSpectateTarget) instead of freezing on the player's own corpse.
+  let viewEntity = self;
+  if (!self.alive) {
+    const target = spectateTargetId ? entities.get(spectateTargetId) : null;
+    if (target && target.alive) viewEntity = target;
+  }
+  const yaw = viewEntity.render.turretRot;
+  const targetX = viewEntity.render.x;
+  const targetZ = viewEntity.render.z;
   const targetY = 0.64;
 
   // Sprint (section 5): temporarily disables ADS outright — holding RMB
@@ -3362,6 +4574,7 @@ let lastHudEnemiesRemaining = null;
 let lastHudHpPct = null;
 let lastHudHpLabel = null;
 let lastHudWeaponType = null;
+let lastHudMineCount = -1;
 let lastHudBuffsKey = null;
 let lastHudSupportType = null;
 let lastHudSupportTotalMs = 1; // captured on activation (server only sends expiresAt, not total duration)
@@ -3400,7 +4613,57 @@ function updateObjectiveHud(status) {
   } else if (obj.type === 'hunt') {
     objectiveLabelEl.textContent = 'TRUY LÙNG — tìm và hạ mục tiêu tinh nhuệ (⭐ trên minimap)';
     objectiveBarWrapEl.classList.add('hidden');
+  } else if (obj.type === 'endless') {
+    objectiveLabelEl.textContent = `ĐỢT SÓNG ${obj.wave} — sống sót càng lâu càng nhiều thưởng`;
+    objectiveBarWrapEl.classList.add('hidden');
   }
+}
+
+// Optional side objective HUD (section 2.3-2.4) — a single quiet line under
+// the main objective row; never blocks/urges, just informs.
+let lastHudOptionalKey = '';
+function updateOptionalObjectiveHud(status) {
+  const opt = status && status.optionalObjective;
+  const key = opt ? `${opt.label}|${opt.done}` : '';
+  if (key === lastHudOptionalKey) return;
+  lastHudOptionalKey = key;
+  if (!opt) {
+    optionalObjectiveRowEl.classList.add('hidden');
+    return;
+  }
+  optionalObjectiveRowEl.classList.remove('hidden');
+  optionalObjectiveLabelEl.textContent = opt.done
+    ? `✅ ${opt.label} — Hoàn thành (+${opt.bonusReward} Xu)`
+    : `🔍 Nhiệm vụ phụ: ${opt.label} (+${opt.bonusReward} Xu)`;
+  optionalObjectiveRowEl.classList.toggle('done', opt.done);
+}
+
+// Survival HUD (section 8-9): wave/time/kills/score + next-wave countdown.
+// Change-guarded like every other HUD field here -- latestStageStatus only
+// actually changes once per server tick, not once per render frame, so
+// this only touches the DOM when something in it truly moved.
+let lastHudSurvivalKey = '';
+function updateSurvivalHud(status) {
+  if (mode !== 'survival') {
+    survivalStatsRowEl.classList.add('hidden');
+    survivalNextWaveRowEl.classList.add('hidden');
+    return;
+  }
+  const stats = status.survivalStats || { kills: 0, score: 0 };
+  const obj = status.objective || {};
+  const elapsedS = obj.elapsedS || 0;
+  const nextWaveInS = obj.nextWaveInS || 0;
+  const key = `${elapsedS}|${stats.kills}|${stats.score}|${nextWaveInS}`;
+  if (key === lastHudSurvivalKey) return;
+  lastHudSurvivalKey = key;
+  survivalStatsRowEl.classList.remove('hidden');
+  const mm = String(Math.floor(elapsedS / 60)).padStart(2, '0');
+  const ss = String(elapsedS % 60).padStart(2, '0');
+  survivalTimeStatEl.textContent = `⏱ ${mm}:${ss}`;
+  survivalKillsStatEl.textContent = `💀 ${stats.kills}`;
+  survivalScoreStatEl.textContent = `🏆 ${stats.score.toLocaleString('vi-VN')}`;
+  survivalNextWaveRowEl.classList.toggle('hidden', nextWaveInS <= 0);
+  if (nextWaveInS > 0) survivalNextWaveCountEl.textContent = nextWaveInS;
 }
 
 // Boss HUD (sections 27-34) — cinematic name/HP bar, phase pips, enrage tint.
@@ -3430,6 +4693,19 @@ function updateBossHud(status) {
     lastHudBossPhase = boss.phase;
   }
   bossHudBarEl.classList.toggle('enraged', !!boss.enraged);
+
+  // Weak point readout (section 1.9) — tells the player WHAT it's called and
+  // WHETHER it's currently open, same "always communicate the danger/
+  // opportunity" standard as every telegraph in this game.
+  if (boss.weakPoint) {
+    bossHudWeakPointEl.classList.remove('hidden');
+    bossHudWeakPointEl.textContent = boss.weakPoint.exposed
+      ? `🎯 Điểm yếu LỘ RA: ${boss.weakPoint.label} (phía sau)`
+      : `🔒 Điểm yếu ẩn: ${boss.weakPoint.label}`;
+    bossHudWeakPointEl.classList.toggle('exposed', boss.weakPoint.exposed);
+  } else {
+    bossHudWeakPointEl.classList.add('hidden');
+  }
 }
 
 function updateHud() {
@@ -3439,7 +4715,7 @@ function updateHud() {
     hudCurrencyValueEl.textContent = profile.currency;
   }
 
-  if (mode === 'campaign' && latestStageStatus) {
+  if ((mode === 'campaign' || mode === 'survival') && latestStageStatus) {
     if (latestStageStatus.stageName !== lastHudStageName) {
       lastHudStageName = latestStageStatus.stageName;
       campaignStageNameEl.textContent = latestStageStatus.stageName;
@@ -3449,7 +4725,15 @@ function updateHud() {
       campaignEnemiesEl.textContent = latestStageStatus.enemiesRemaining;
     }
     updateObjectiveHud(latestStageStatus);
+    updateOptionalObjectiveHud(latestStageStatus);
     updateBossHud(latestStageStatus);
+    updateSurvivalHud(latestStageStatus);
+  }
+
+  // Survival warning banner (section 45) auto-hide -- cheap, runs every
+  // frame, but only ever does work while the banner is actually showing.
+  if (!survivalWarningBannerEl.classList.contains('hidden') && performance.now() > survivalWarningHideAt) {
+    survivalWarningBannerEl.classList.add('hidden');
   }
 
   if (!self) return;
@@ -3518,6 +4802,22 @@ function updateHud() {
     if (weaponMeta.tag) weaponTagEl.textContent = weaponMeta.tag;
   }
 
+  // How many of my own traps are still out there. Unlike the badge above,
+  // this is live state rather than a one-off on weapon change, so it needs
+  // its own change guard (the count is derived from the snapshot the mine
+  // meshes already render — no extra server payload).
+  if (self.weaponType === 'mine') {
+    let active = 0;
+    for (const m of latestMineData) if (m.ownerId === selfId) active++;
+    if (active !== lastHudMineCount) {
+      lastHudMineCount = active;
+      weaponTagEl.classList.remove('hidden');
+      weaponTagEl.textContent = `ĐANG CÀI: ${active}/${WEAPON_META.mine.maxActive}`;
+    }
+  } else if (lastHudMineCount !== -1) {
+    lastHudMineCount = -1; // so switching back to mines re-renders the count
+  }
+
   // The buffsKey captures every bit of state the rendered HTML depends on
   // (which buffs are active + their rounded remaining seconds) so the
   // (comparatively expensive) innerHTML rebuild below only runs on the
@@ -3565,6 +4865,9 @@ function updateHud() {
     if (lastHudAlive !== false) {
       lastHudAlive = false;
       deathBanner.classList.remove('hidden');
+      // Spectator mode (section 5.4): pick a target the instant death is
+      // detected client-side, same beat as showing the death banner itself.
+      pickSpectateTarget(0);
     }
     const remaining = Math.max(0, RESPAWN_DELAY_MS - (performance.now() - localDeathStart));
     const respawnSec = Math.ceil(remaining / 1000);
@@ -3572,9 +4875,17 @@ function updateHud() {
       lastHudRespawnSec = respawnSec;
       respawnCountEl.textContent = respawnSec;
     }
+    // Re-validate every frame -- the spectated player might themselves die,
+    // disconnect, or (in solo-relevant modes) simply no longer qualify.
+    if (spectateTargetId) {
+      const t = entities.get(spectateTargetId);
+      if (!t || !t.alive) pickSpectateTarget(0);
+    }
   } else if (lastHudAlive !== true) {
     lastHudAlive = true;
     deathBanner.classList.add('hidden');
+    spectateRowEl.classList.add('hidden');
+    spectateTargetId = null;
   }
 }
 
@@ -3660,6 +4971,22 @@ function updateMinimap() {
     ctx.fill();
   }
 
+  // Quick ping blips (section 6.2) -- pulsing rings that fade out and get
+  // pruned once expired; same world-relative rotated transform as
+  // obstacles/pickups/entities above.
+  const nowPerf = performance.now();
+  activePings = activePings.filter((pg) => pg.expiresAt > nowPerf);
+  for (const pg of activePings) {
+    const p = toMap(pg.x, pg.z);
+    const life = 1 - (pg.expiresAt - nowPerf) / 4000;
+    const pulse = 4 + Math.sin(nowPerf / 120) * 1.5;
+    ctx.strokeStyle = `rgba(255,209,102,${Math.max(0, 1 - life)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(p.px, p.py, 6 + pulse, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
   ctx.restore();
 
   // Compass "N" (world +z under the same convention as toMap above): swings
@@ -3717,6 +5044,11 @@ function animate() {
     updatePickups(dt, now / 1000);
     syncZones();
     updateZonesVisual(now / 1000);
+    syncMines();
+    updateMinesVisual(now / 1000);
+    syncHazards();
+    updateHazardsVisual(now / 1000);
+    updateKothZoneVisual(now / 1000);
     updateBursts(dt);
     updateLightningBolts(dt);
     updateBossTelegraphVisual();

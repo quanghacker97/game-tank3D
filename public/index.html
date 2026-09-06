@@ -11,13 +11,25 @@
   <canvas id="scene"></canvas>
 
   <div id="hud">
+    <div id="connStatus" class="hidden"></div>
     <div id="campaignBar" class="hidden">
       <div id="campaignBarMain"><span id="campaignStageName"></span> — Còn <span id="campaignEnemies">0</span> kẻ địch</div>
       <div id="objectiveRow" class="hidden">
         <span id="objectiveLabel"></span>
         <div id="objectiveBarWrap" class="hidden"><div id="objectiveBar"></div></div>
       </div>
+      <div id="optionalObjectiveRow" class="hidden">
+        <span id="optionalObjectiveLabel"></span>
+      </div>
+      <div id="survivalStatsRow" class="hidden">
+        <span id="survivalTimeStat">⏱ 00:00</span>
+        <span id="survivalKillsStat">💀 0</span>
+        <span id="survivalScoreStat">🏆 0</span>
+      </div>
+      <div id="survivalNextWaveRow" class="hidden">Đợt tiếp theo sau <span id="survivalNextWaveCount">3</span>s</div>
     </div>
+
+    <div id="survivalWarningBanner" class="hidden"></div>
 
     <div id="bossHud" class="hidden">
       <div id="bossHudName"></div>
@@ -25,6 +37,7 @@
         <div id="bossHudBar"></div>
         <div id="bossHudPhasePips"></div>
       </div>
+      <div id="bossHudWeakPoint" class="hidden"></div>
     </div>
 
     <div id="hudCurrency">💰 <span id="hudCurrencyValue">0</span></div>
@@ -56,12 +69,25 @@
     </div>
     <div id="crosshair"></div>
     <div id="lockLabel" class="hidden"></div>
+    <div id="pingRow" class="hidden">
+      <button class="pingBtn" id="pingBtnAttack" title="1">⚔️</button>
+      <button class="pingBtn" id="pingBtnDefend" title="2">🛡️</button>
+      <button class="pingBtn" id="pingBtnEnemy" title="3">⚠️</button>
+      <button class="pingBtn" id="pingBtnHelp" title="4">🆘</button>
+      <button class="pingBtn" id="pingBtnIncoming" title="5">🏃</button>
+      <button class="pingBtn" id="pingBtnTarget" title="6">🎯</button>
+    </div>
     <div id="killfeed"></div>
     <div id="scoreboard"></div>
     <div id="helpText">W/S: tiến/lùi &nbsp;|&nbsp; A/D: né trái/phải &nbsp;|&nbsp; Chuột: xoay xe &amp; ngắm &nbsp;|&nbsp; Click/Space: bắn &nbsp;|&nbsp; Tab: khoá mục tiêu &nbsp;|&nbsp; Esc: thoát ngắm</div>
     <div id="deathBanner" class="hidden">
       <div id="deathTitle">Bạn đã bị hạ!</div>
       <div id="deathSub">Hồi sinh sau <span id="respawnCount">3</span>s…</div>
+      <div id="spectateRow" class="hidden">
+        <button id="spectatePrevBtn">◀</button>
+        <span id="spectateLabel">Đang xem: –</span>
+        <button id="spectateNextBtn">▶</button>
+      </div>
     </div>
 
     <div id="stageIntroOverlay" class="hidden">
@@ -116,9 +142,112 @@
       <div class="currencyBadge">💰 <span id="menuCurrency">0</span> Xu</div>
       <button class="menuBtn" id="btnArena">⚔️ Đấu trường (PvP)</button>
       <button class="menuBtn" id="btnTeam">🚩 Tổ đội (Team Deathmatch)</button>
+      <button class="menuBtn" id="btnKoth">⛰️ Chiếm Điểm (King of the Hill)</button>
       <button class="menuBtn" id="btnCampaign">🎯 Chiến dịch (Vượt ải)</button>
+      <button class="menuBtn" id="btnEndless">♾️ Sinh Tồn (Endless)</button>
+      <button class="menuBtn" id="btnDaily">📅 Thử Thách Hàng Ngày</button>
       <button class="menuBtn" id="btnGarage">🔧 Gara nâng cấp</button>
+      <button class="menuBtn" id="btnAchievements">🏆 Thành Tựu</button>
+      <button class="menuBtn" id="btnTutorial">📖 Xem Hướng Dẫn</button>
       <div id="menuHint">Xin chào, <span id="menuName"></span> · <a href="#" id="changeNameLink">đổi tên</a></div>
+    </div>
+
+    <div id="panelTeamSelect" class="panel wide hidden">
+      <h1>Chọn đội</h1>
+      <p>Chọn đội bạn muốn tham gia. Đội đang đông hơn đáng kể sẽ có gợi ý — bạn vẫn có thể chọn tự do.</p>
+      <div id="teamChoiceRow">
+        <button class="teamChoiceBtn team-red" id="btnTeamRed">
+          <span class="teamChoiceLabel">🔴 Đội Đỏ</span>
+          <span class="teamChoiceCount" id="teamRedCount">–</span>
+          <span class="teamChoiceWarn hidden" id="teamRedWarn">⚠ Đội đang đông hơn</span>
+        </button>
+        <button class="teamChoiceBtn team-blue" id="btnTeamBlue">
+          <span class="teamChoiceLabel">🔵 Đội Xanh</span>
+          <span class="teamChoiceCount" id="teamBlueCount">–</span>
+          <span class="teamChoiceWarn hidden" id="teamBlueWarn">⚠ Đội đang đông hơn</span>
+        </button>
+        <button class="teamChoiceBtn team-auto" id="btnTeamAuto">
+          <span class="teamChoiceLabel">🎲 Tự động cân bằng</span>
+        </button>
+      </div>
+      <button class="inviteBtn" id="teamInviteBtn">🔗 Sao chép link mời bạn (Tổ đội)</button>
+      <button class="backBtn" id="teamSelectBack">← Quay lại</button>
+    </div>
+
+    <div id="panelKothSelect" class="panel wide hidden">
+      <h1>Chọn đội — Chiếm Điểm</h1>
+      <p>Đội nào giữ điểm chiếm một mình sẽ được cộng điểm dần. Về đích trước tại điểm mục tiêu để thắng.</p>
+      <div id="kothChoiceRow">
+        <button class="teamChoiceBtn team-red" id="btnKothRed">
+          <span class="teamChoiceLabel">🔴 Đội Đỏ</span>
+          <span class="teamChoiceCount" id="kothRedCount">–</span>
+          <span class="teamChoiceWarn hidden" id="kothRedWarn">⚠ Đội đang đông hơn</span>
+        </button>
+        <button class="teamChoiceBtn team-blue" id="btnKothBlue">
+          <span class="teamChoiceLabel">🔵 Đội Xanh</span>
+          <span class="teamChoiceCount" id="kothBlueCount">–</span>
+          <span class="teamChoiceWarn hidden" id="kothBlueWarn">⚠ Đội đang đông hơn</span>
+        </button>
+        <button class="teamChoiceBtn team-auto" id="btnKothAuto">
+          <span class="teamChoiceLabel">🎲 Tự động cân bằng</span>
+        </button>
+      </div>
+      <button class="inviteBtn" id="kothInviteBtn">🔗 Sao chép link mời bạn (Chiếm Điểm)</button>
+      <button class="backBtn" id="kothSelectBack">← Quay lại</button>
+    </div>
+
+    <div id="panelEndlessSelect" class="panel wide hidden">
+      <h1>Sinh Tồn (Endless)</h1>
+      <p>Chống lại các đợt sóng kẻ địch ngày càng mạnh, boss thật xuất hiện định kỳ. Sống sót càng lâu, thưởng càng nhiều.</p>
+      <p id="endlessBestLine"></p>
+      <div id="endlessChoiceRow">
+        <button class="endlessChoiceBtn" id="btnEndlessSolo">
+          <span class="endlessChoiceLabel">🧍 Chơi một mình</span>
+          <span class="endlessChoiceDesc">Phòng riêng · dùng độ khó hiện tại · chết là kết thúc, nhận thưởng</span>
+        </button>
+        <button class="endlessChoiceBtn" id="btnEndlessCoop">
+          <span class="endlessChoiceLabel">👥 Cùng người khác</span>
+          <span class="endlessChoiceDesc">Phòng chung · hồi sinh khi chết · không nhận thưởng</span>
+          <span class="endlessChoiceCount" id="endlessCoopCount">–</span>
+        </button>
+      </div>
+      <button class="inviteBtn" id="endlessInviteBtn">🔗 Sao chép link mời bạn (Cùng chơi)</button>
+      <button class="backBtn" id="endlessSelectBack">← Quay lại</button>
+    </div>
+
+    <div id="panelDaily" class="panel wide hidden">
+      <h1>Thử Thách Hàng Ngày</h1>
+      <p>Cùng 1 hiệu ứng đặc biệt cho mọi người trong ngày hôm nay — chọn Chiến dịch hoặc Sinh Tồn. Hoàn thành để nhận thêm thưởng.</p>
+      <div id="dailyCard">
+        <div id="dailyStageName">–</div>
+        <div id="dailyModifierLabel">–</div>
+        <div id="dailyModifierDesc">–</div>
+        <div id="dailyBonus">–</div>
+      </div>
+      <button class="menuBtn" id="btnDailyStart">🎯 Chiến Dịch Hôm Nay</button>
+      <button class="menuBtn" id="btnDailySurvivalSolo">🧍 Sinh Tồn Một Mình (Hàng Ngày)</button>
+      <button class="menuBtn" id="btnDailySurvivalCoop">👥 Sinh Tồn Cùng Người Khác (Hàng Ngày) <span id="dailyCoopCount"></span></button>
+      <button class="backBtn" id="dailyBack">← Quay lại</button>
+    </div>
+
+    <div id="panelTutorial" class="panel wide hidden">
+      <h1>Hướng Dẫn Chơi</h1>
+      <div id="tutorialCard">
+        <div id="tutorialIcon"></div>
+        <div id="tutorialTitle"></div>
+        <div id="tutorialDesc"></div>
+        <div id="tutorialProgress"></div>
+      </div>
+      <div id="tutorialButtons">
+        <button class="backBtn" id="btnTutorialSkip">Bỏ qua</button>
+        <button class="menuBtn" id="btnTutorialNext">Tiếp theo</button>
+      </div>
+    </div>
+
+    <div id="panelAchievements" class="panel wide hidden">
+      <h1>Thành Tựu</h1>
+      <div id="achievementList"></div>
+      <button class="backBtn" id="achievementsBack">← Quay lại</button>
     </div>
 
     <div id="panelStages" class="panel wide hidden">

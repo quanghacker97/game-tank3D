@@ -411,16 +411,61 @@ const BOSS_MINION_CONFIG = {
   enrageCooldownMult: 0.72, // and it calls them in faster, same spirit as BOSS_ENRAGE_COOLDOWN_MULT
 };
 
+// Boss weak points (section 1.9): an OPTIONAL, per-boss vulnerable arc on
+// the hull's rear. Deliberately not given to every boss — a boss whose
+// identity is "relentlessly faces you" (ch1's rusher, ch4's teleporter)
+// stays a straight damage race, while the heavy, slow-turning machines
+// reward the player for driving around behind them.
+//   arcDeg    — half-width of the vulnerable arc measured from dead astern
+//   damageMult— direct-hit multiplier inside that arc
+//   phases    — omit for "always exposed", or list the boss phases (0-3,
+//               see BOSS_PHASE_THRESHOLDS) in which the plating is open
 const BOSS_DEFS = [
   { id: 'boss_ch1', chapter: 1, name: 'Chỉ Huy Đột Kích', color: 0xff5c3d, scale: 1.5, attacks: ['dash', 'bulletStorm'] },
-  { id: 'boss_ch2', chapter: 2, name: 'Xe Tăng Cơ Giới', color: 0x8a8a8a, scale: 1.65, attacks: ['groundSlam', 'bulletStorm', 'missileBarrage'] },
+  {
+    id: 'boss_ch2',
+    chapter: 2,
+    name: 'Xe Tăng Cơ Giới',
+    color: 0x8a8a8a,
+    scale: 1.65,
+    attacks: ['groundSlam', 'bulletStorm', 'missileBarrage'],
+    // The player's first weak point: always open, generous arc — this is
+    // where the mechanic is taught.
+    weakPoint: { label: 'Khoang Động Cơ', arcDeg: 65, damageMult: 2 },
+  },
   { id: 'boss_ch3', chapter: 3, name: 'Tư Lệnh Thiết Giáp', color: 0x3d5cff, scale: 1.6, attacks: ['groundSlam', 'dash', 'summon'] },
   { id: 'boss_ch4', chapter: 4, name: 'Thợ Săn Bóng Đêm', color: 0x2a2a3a, scale: 1.55, attacks: ['dash', 'teleportStrike', 'bulletStorm'] },
-  { id: 'boss_ch5', chapter: 5, name: 'Quái Thú Biến Dị', color: 0x6b2fa0, scale: 1.75, attacks: ['dash', 'groundSlam', 'summon'] },
+  {
+    id: 'boss_ch5',
+    chapter: 5,
+    name: 'Quái Thú Biến Dị',
+    color: 0x6b2fa0,
+    scale: 1.75,
+    attacks: ['dash', 'groundSlam', 'summon'],
+    // Mutation core only splits open once the beast has been hurt.
+    weakPoint: { label: 'Lõi Đột Biến', arcDeg: 55, damageMult: 2.2, phases: [1, 2, 3] },
+  },
   { id: 'boss_ch6', chapter: 6, name: 'Kẻ Hủy Diệt Tầm Xa', color: 0xd9a441, scale: 1.6, attacks: ['laserBeam', 'missileBarrage', 'teleportStrike'] },
-  { id: 'boss_ch7', chapter: 7, name: 'Cỗ Máy Thử Nghiệm', color: 0x35e6ff, scale: 1.7, attacks: ['laserBeam', 'groundSlam', 'summon', 'bulletStorm'] },
+  {
+    id: 'boss_ch7',
+    chapter: 7,
+    name: 'Cỗ Máy Thử Nghiệm',
+    color: 0x35e6ff,
+    scale: 1.7,
+    attacks: ['laserBeam', 'groundSlam', 'summon', 'bulletStorm'],
+    // Narrow, late-opening, but the biggest payoff of the three.
+    weakPoint: { label: 'Lõi Vũ Khí', arcDeg: 45, damageMult: 2.5, phases: [2, 3] },
+  },
   { id: 'boss_ch8', chapter: 8, name: 'Chúa Tể Bầy Đàn', color: 0x3ddc6c, scale: 1.8, attacks: ['summon', 'bulletStorm', 'groundSlam'] },
-  { id: 'boss_ch9', chapter: 9, name: 'Cỗ Máy Chiến Tranh', color: 0xff4d4d, scale: 1.9, attacks: ['missileBarrage', 'laserBeam', 'groundSlam', 'dash'] },
+  {
+    id: 'boss_ch9',
+    chapter: 9,
+    name: 'Cỗ Máy Chiến Tranh',
+    color: 0xff4d4d,
+    scale: 1.9,
+    attacks: ['missileBarrage', 'laserBeam', 'groundSlam', 'dash'],
+    weakPoint: { label: 'Lò Phản Ứng Sau', arcDeg: 55, damageMult: 1.9 },
+  },
   {
     id: 'boss_ch10',
     chapter: 10,
@@ -429,6 +474,9 @@ const BOSS_DEFS = [
     scale: 2.2,
     isFinal: true,
     attacks: ['missileBarrage', 'laserBeam', 'groundSlam', 'summon', 'dash', 'bulletStorm', 'teleportStrike'],
+    // The final boss only ever exposes its core in the last two phases —
+    // the fight's answer to its otherwise enormous HP pool.
+    weakPoint: { label: 'Lõi Hủy Diệt', arcDeg: 50, damageMult: 2.2, phases: [2, 3] },
     // The final boss calls in reinforcements sooner and, once enraged, in
     // greater numbers than every other chapter boss — concretely exercising
     // BOSS_MINION_CONFIG's per-boss override rather than leaving it
@@ -635,6 +683,29 @@ const WEAPON_TYPES = {
     clusterSpeed: 46,
     clusterSpreadAngle: Math.PI * 2, // fragments spray in a full circle from the impact point
   },
+  // The one weapon that is PLACED rather than fired: pressing fire drops an
+  // armed charge at the tank's own position (same fire button/cooldown path
+  // as every other weapon, so desktop and touch controls both work
+  // unchanged). `deploy` is what tells Game.js#_fireWeapon to take the
+  // _deployMine branch instead of spawning a bullet.
+  mine: {
+    label: 'Mìn cài (Mine)',
+    deploy: true,
+    bulletSpeed: 0,
+    damageMult: 2.4, // heavy payoff, but only if the trap actually catches someone
+    cooldownMult: 1.7,
+    bulletsPerShot: 1,
+    spreadAngle: 0,
+    splashRadius: 0,
+    color: 0xff3b3b,
+    mineArmDelayMs: 900, // can't be dropped point-blank as an instant grenade
+    mineLifetimeMs: 30000, // un-triggered mines quietly expire (never litter the map forever)
+    mineDetectRadius: 5.5,
+    mineTelegraphMs: 650, // fairness (section 11): a visible/audible warning before it blows
+    mineExplodeRadius: 7,
+    mineKnockback: 6,
+    mineMaxActive: 3, // per owner; deploying a 4th removes that owner's oldest
+  },
 };
 
 const WEAPON_BUFF_DURATION_MS = 25000;
@@ -828,6 +899,7 @@ const PICKUP_TYPES = {
   weapon_vampire: { kind: 'weapon', weapon: 'vampire', label: 'Đạn hút máu', color: 0xff2d55, rarity: 'rare' },
   weapon_cluster: { kind: 'weapon', weapon: 'cluster', label: 'Đạn chùm', color: 0xffa64d, rarity: 'rare' },
   weapon_marking: { kind: 'weapon', weapon: 'marking', label: 'Đạn đánh dấu', color: 0xffe14d, rarity: 'epic' },
+  weapon_mine: { kind: 'weapon', weapon: 'mine', label: 'Mìn cài', color: 0xff3b3b, rarity: 'epic' },
   // ---- Support-weapon crates (rarer, visually distinct on the client) ----
   support_turret: { kind: 'support', support: 'turret', label: 'Auto Turret', color: 0xffb020, rarity: 'common' },
   support_drone: { kind: 'support', support: 'drone', label: 'Combat Drone', color: 0x4dd0ff, rarity: 'uncommon' },
@@ -896,6 +968,156 @@ const RAPID_FIRE_MULT = 0.65; // multiplies cooldown (lower = faster)
 const RAPID_FIRE_DURATION_MS = 20000;
 
 const INVULN_DURATION_MS = 4000;
+
+// ---------------------------------------------------------------------
+// Environmental hazards (section 2.1-2.2): fixed, deterministic per-stage
+// ground danger — never a rectangle/telegraph the collision system would
+// need new geometry for, deliberately reusing the same circular-radius
+// check every zone/splash/mine already uses in Game.js.
+//   toxic/fire — always active, periodic tick damage (like a permanent
+//     danger zone rooted to the stage rather than fired by a player).
+//   laser/piston — cycle on a fixed timer computed PURELY from elapsed
+//     stage time (see hazardPhaseAt below): idle -> telegraph (visible
+//     warning, section 11) -> active (damaging) -> back to idle. No
+//     per-tick mutable position/velocity, so both server and client can
+//     derive the exact same phase independently from the clock alone.
+// Hazards never spawn in a chapter's very first stage (let the player
+// learn the stage's enemies before adding ground danger) and ramp in
+// variety across chapters exactly like enemy roles already do.
+// ---------------------------------------------------------------------
+const HAZARD_SPAWN_POINTS = [
+  { x: 0, z: -18 }, { x: 0, z: 18 }, { x: -24, z: 0 }, { x: 24, z: 0 },
+  { x: 30, z: 30 }, { x: -30, z: -30 }, { x: 30, z: -30 }, { x: -30, z: 30 },
+];
+
+function hazardPhaseAt(hazard, elapsedMs) {
+  if (hazard.type === 'toxic' || hazard.type === 'fire') return 'active'; // always on
+  const t = ((elapsedMs % hazard.cycleMs) + hazard.cycleMs) % hazard.cycleMs;
+  if (t < hazard.telegraphMs) return 'telegraph';
+  if (t < hazard.telegraphMs + hazard.activeMs) return 'active';
+  return 'idle';
+}
+
+function buildHazardsForStage(chapter, stageInChapter) {
+  if (chapter < 3 || stageInChapter === 1) return [];
+  const pick = (offset) => HAZARD_SPAWN_POINTS[(chapter * 3 + stageInChapter + offset) % HAZARD_SPAWN_POINTS.length];
+  const hazards = [];
+  const p0 = pick(0);
+  hazards.push({ type: 'toxic', label: 'Vùng Độc', x: p0.x, z: p0.z, radius: 6, damage: 6, tickMs: 600 });
+  if (chapter >= 5) {
+    const p1 = pick(3);
+    hazards.push({ type: 'fire', label: 'Vùng Lửa', x: p1.x, z: p1.z, radius: 5, damage: 9, tickMs: 500 });
+  }
+  if (chapter >= 7) {
+    const p2 = pick(5);
+    hazards.push({ type: 'laser', label: 'Rào Laser', x: p2.x, z: p2.z, radius: 7, damage: 22, cycleMs: 5000, telegraphMs: 1100, activeMs: 900 });
+  }
+  if (chapter >= 9) {
+    const p3 = pick(7);
+    hazards.push({ type: 'piston', label: 'Piston Nghiền', x: p3.x, z: p3.z, radius: 6, damage: 30, cycleMs: 4500, telegraphMs: 900, activeMs: 700 });
+  }
+  return hazards;
+}
+
+// ---------------------------------------------------------------------
+// Optional side objectives (section 2.3-2.4): ONE extra, clearly-optional
+// target per eligible stage — a stationary "radar" bot placed away from the
+// main wave path. Destroying it before the stage ends pays a bonus on top
+// of the normal stage-clear reward; leaving it alone never blocks or fails
+// the stage (see Game.js's `optionalDone` — purely additive). Skipped on a
+// chapter's first stage (nothing to explore yet) and on boss stages (the
+// boss fight is already the whole stage).
+// ---------------------------------------------------------------------
+const OPTIONAL_OBJECTIVE_SPAWN_POINTS = [
+  { x: -45, z: 10 }, { x: 45, z: -10 }, { x: 10, z: -45 }, { x: -10, z: 45 },
+  { x: -45, z: -45 }, { x: 45, z: 45 },
+];
+
+function buildOptionalObjectiveForStage(chapter, stageInChapter, isBoss) {
+  // Chapter 1 stays a pure "basic combat" tutorial chapter (section 14) —
+  // no side systems layered on yet, same reasoning hazards already follow.
+  if (chapter < 2 || isBoss || stageInChapter === 1) return null;
+  const p = OPTIONAL_OBJECTIVE_SPAWN_POINTS[(chapter * 7 + stageInChapter) % OPTIONAL_OBJECTIVE_SPAWN_POINTS.length];
+  return {
+    label: 'Trạm Radar Địch',
+    x: p.x,
+    z: p.z,
+    tier: chapter >= 7 ? 'hard' : chapter >= 4 ? 'medium' : 'easy',
+    bonusReward: Math.round(30 + chapter * 10),
+  };
+}
+
+// ---------------------------------------------------------------------
+// Quick ping system (section 6.2): a fixed, server-validated allowlist --
+// never a free-text chat (nothing to moderate, nothing to inject), same
+// "never trust an arbitrary client string" rule this file already applies
+// to team/weapon names elsewhere. Rate-limited per player so it stays a
+// tactical signal, not spam.
+// ---------------------------------------------------------------------
+const PING_KINDS = {
+  attack: { label: 'Tấn công!', icon: '⚔️' },
+  defend: { label: 'Phòng thủ!', icon: '🛡️' },
+  enemy: { label: 'Có địch!', icon: '⚠️' },
+  help: { label: 'Cần trợ giúp!', icon: '🆘' },
+  incoming: { label: 'Đang đến!', icon: '🏃' },
+  target: { label: 'Mục tiêu!', icon: '🎯' },
+};
+const PING_COOLDOWN_MS = 2000;
+
+// ---------------------------------------------------------------------
+// Endless / Survival mode (section 2.5): infinite escalating waves reusing
+// the exact same bot/boss-spawn machinery as Campaign rather than any new
+// content. Escalation rides `chapterScaling` (below, chapter 1-10) for the
+// first `softCapWave` waves — same formula Campaign already uses for enemy
+// stats/elite chance/role unlocks — then an UNCAPPED bonus multiplier keeps
+// growing indefinitely past that, since chapterScaling itself maxes out at
+// chapter 10 and a true endless mode must never plateau.
+// ---------------------------------------------------------------------
+const SURVIVAL_CONFIG = {
+  baseBotCount: 3,
+  botCountPerWave: 0.4,
+  maxBotsPerWave: 14, // hard safety cap per wave -- doubles as the MAX_ACTIVE_ENEMIES ceiling (section 18/47/47)
+  chapterPerWave: 0.5, // virtual "chapter" advance per wave
+  softCapWave: 18, // the wave at which the virtual chapter has already reached 10
+  bonusHpPerWaveOverCap: 0.06,
+  bonusDmgPerWaveOverCap: 0.04,
+  bossEveryWaves: 5,
+  minibossEveryWaves: 3, // a lone, clearly-labeled strong elite between boss waves (section 21) -- skipped on boss waves themselves (bossEveryWaves takes priority)
+  minibossHpMult: 1.6,
+  minibossDmgMult: 1.25,
+  bossAddsFromCycle: 1, // starting from the boss's 2nd rotation (survivalBossCycle >= this), a boss wave also spawns a few adds (section 24)
+  bossAddsCount: 3,
+  // Spawn frequency (section 18): the breather between waves shrinks a
+  // little each wave -- never below minWaveBreatherMs, so the player is
+  // always guaranteed SOME recovery window even at very high waves.
+  waveBreatherMs: 3500, // same breather Campaign's _spawnWave uses
+  waveBreatherShrinkPerWave: 60,
+  minWaveBreatherMs: 1200,
+  rewardPerWave: 18, // solo-only base reward component
+  rewardPerKill: 1,
+  rewardPerElite: 4,
+  rewardPerBoss: 40,
+  // Score (section 31-33) -- a separate number from the currency reward,
+  // shown on the result screen and tracked as a personal best client-side.
+  scorePerKill: 10,
+  scorePerElite: 40,
+  scorePerMiniboss: 150,
+  scorePerBoss: 800,
+  scorePerWaveCleared: 25,
+  // Kill-streak score multiplier (section 32) -- reuses the SAME killStreak
+  // field Team/Arena PvP already track (section 5.5), capped low so score
+  // still meaningfully rewards wave/time progression, not just farming.
+  streakScoreMultPerStack: 0.1,
+  maxStreakScoreMult: 1.5,
+  // Daily Modifier integration (follow-up): solo pays its usual one-time
+  // lump reward at death (see _getSurvivalStatus's dailyBonus), folding in
+  // DAILY_BONUS_REWARD once, exactly like a cleared Daily Campaign stage.
+  // Co-op never "finishes" to pay a lump sum, so it instead pays this
+  // smaller amount to everyone in the room each time a wave is actually
+  // cleared -- bounded by real playtime/effort, same trust model as
+  // everything else in this project (no accounts to rate-limit against).
+  dailyCoopBonusPerWave: 15,
+};
 
 // ---------------------------------------------------------------------
 // Campaign structure (section 18-22, 45): 10 CHAPTERS x 8 STAGES = 80
@@ -1024,6 +1246,8 @@ function generateStages() {
         waves,
         eliteChance,
         boss: isBoss ? BOSS_DEFS[chapter - 1] : null,
+        hazards: buildHazardsForStage(chapter, stageInChapter),
+        optionalObjective: buildOptionalObjectiveForStage(chapter, stageInChapter, isBoss),
         reward,
         // kept for the /api/stages summary + any legacy reader expecting a
         // flat bot count (see server/index.js).
@@ -1035,6 +1259,49 @@ function generateStages() {
 }
 
 const STAGES = generateStages();
+
+// ---------------------------------------------------------------------
+// Daily modifiers (section 2.6): ONE fixed stage + ONE fixed modifier per
+// calendar day, computed PURELY from the clock (epoch day number) — no
+// database, no "today's pick" to store/reset, every server/player
+// independently computes the exact same answer for the same UTC day.
+// Never mandatory for progression (section 2.6): it's just campaign stage
+// mechanics (waves/objective/hazards/optional-objective all still apply
+// unmodified) with one extra multiplier layered on top, same additive
+// spirit as DIFFICULTIES itself.
+// ---------------------------------------------------------------------
+const DAILY_MODIFIERS = {
+  fastEnemies: { label: 'Kẻ Địch Siêu Tốc', desc: 'Tốc độ di chuyển kẻ địch +40%', enemySpeedMult: 1.4 },
+  eliteInvasion: { label: 'Xâm Lăng Tinh Nhuệ', desc: 'Tỉ lệ xuất hiện tinh nhuệ tăng mạnh', eliteChanceMult: 3 },
+  rapidEnemyFire: { label: 'Hỏa Lực Dồn Dập', desc: 'Kẻ địch bắn nhanh gấp đôi', enemyFireRateMult: 2 },
+  quickReload: { label: 'Nạp Đạn Siêu Tốc', desc: 'Thời gian hồi chiêu của bạn giảm 30%', playerCooldownMult: 0.7 },
+  infiniteSpecialAmmo: { label: 'Đạn Đặc Biệt Vô Hạn', desc: 'Vũ khí đặc biệt không hết hạn trong suốt ải', infiniteWeaponBuff: true },
+  armoredEnemies: { label: 'Kẻ Địch Giáp Dày', desc: 'Máu kẻ địch +35%', enemyHpMult: 1.35 },
+};
+const DAILY_MODIFIER_KEYS = Object.keys(DAILY_MODIFIERS);
+const DAILY_BONUS_REWARD = 150;
+
+// ---------------------------------------------------------------------
+// Tank skins (section 4.1-4.2 follow-up): server-side whitelist mirroring
+// client.js's SKIN_CATALOG ids ONLY (never the cost/hullColor -- those are
+// pure rendering data the server doesn't need). The server's sole job is
+// to validate + echo back whichever id a client claims, so other players'
+// clients can look the id up in their OWN copy of SKIN_CATALOG and render
+// it -- same "client owns cosmetic data, server just relays a validated
+// key" split already used for team color, ping kind, etc.
+// ---------------------------------------------------------------------
+const SKIN_IDS = ['classic', 'desert', 'arctic', 'military', 'stealth', 'cyber', 'inferno', 'golden'];
+const DAY_MS = 86400000;
+
+function getDailyDayIndex(now) {
+  return Math.floor((now == null ? Date.now() : now) / DAY_MS);
+}
+function getDailyModifierKey(now) {
+  return DAILY_MODIFIER_KEYS[getDailyDayIndex(now) % DAILY_MODIFIER_KEYS.length];
+}
+function getDailyStageId(now) {
+  return 1 + (getDailyDayIndex(now) % STAGES.length);
+}
 
 module.exports = {
   TICK_RATE,
@@ -1086,6 +1353,21 @@ module.exports = {
   bossStatMult,
   BOSS_MINION_CONFIG,
   BOSS_DEFS,
+  SURVIVAL_CONFIG,
+  PING_KINDS,
+  PING_COOLDOWN_MS,
+  DAILY_MODIFIERS,
+  DAILY_MODIFIER_KEYS,
+  DAILY_BONUS_REWARD,
+  SKIN_IDS,
+  getDailyDayIndex,
+  getDailyModifierKey,
+  getDailyStageId,
+  HAZARD_SPAWN_POINTS,
+  hazardPhaseAt,
+  buildHazardsForStage,
+  OPTIONAL_OBJECTIVE_SPAWN_POINTS,
+  buildOptionalObjectiveForStage,
   CHAPTER_THEMES,
   OBJECTIVE_TYPES,
   STAGES,

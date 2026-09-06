@@ -44,6 +44,13 @@ const {
   BOSS_ENRAGE_SPEED_MULT,
   bossStatMult,
   BOSS_MINION_CONFIG,
+  BOSS_DEFS,
+  SURVIVAL_CONFIG,
+  PING_KINDS,
+  PING_COOLDOWN_MS,
+  DAILY_BONUS_REWARD,
+  SKIN_IDS,
+  hazardPhaseAt,
   WEAPON_TYPES,
   WEAPON_BUFF_DURATION_MS,
   SPLASH_FALLOFF_MIN,
@@ -80,6 +87,7 @@ let nextBulletId = 1;
 let nextBotSeq = 1;
 let nextPickupId = 1;
 let nextZoneId = 1;
+let nextMineId = 1;
 
 function randomSpawn(team) {
   const pool = team && TEAM_SPAWN_POINTS[team] ? TEAM_SPAWN_POINTS[team] : SPAWN_POINTS;
@@ -431,6 +439,7 @@ class Game {
     this.bullets = new Map(); // id -> bullet state
     this.pickups = new Map(); // id -> {id, kind, x, z, droppedAt}
     this.zones = new Map(); // id -> area-denial zone (missile pod danger zones)
+    this.mines = new Map(); // id -> deployed mine (see _deployMine/_updateMines)
     this._shockChainCooldown = new Map(); // playerId -> timestamp before which it can't be re-chained
     this.events = []; // transient events (hit/kill/join/leave/pickup) since last flush
     this._colorIndex = 0;
@@ -449,19 +458,82 @@ class Game {
     this.bossId = null;
     this._bossSpawned = false;
 
+    // ---- Environmental hazards (section 2.1-2.2) — mutable per-room tick
+    // state lives HERE, never on stageDef.hazards itself: stageDef is a
+    // shared STAGES entry (one object reused by every player who ever plays
+    // this stage), so writing a nextTickAt onto it would leak one player's
+    // damage-tick pacing into every other room replaying the same stage.
+    this.hazardState = (stageDef && stageDef.hazards ? stageDef.hazards : []).map(() => ({ nextTickAt: 0 }));
+
+    // ---- Optional side objective (section 2.3-2.4) — spawned once
+    // alongside wave 0 (see _updateWaves); never blocks/fails the stage.
+    this.optionalObjectiveBotId = null;
+    this.optionalObjectiveDone = false;
+    this._optionalObjectiveSpawned = false;
+
+    // ---- Daily modifier (section 2.6) — set by RoomManager right after
+    // construction, exactly like survivalCoop; null for every normal
+    // campaign run. Never mandatory: with this left null, every hook below
+    // that reads it is a complete no-op and campaign behaves exactly as
+    // before Daily existed.
+    this.dailyModifier = null;
+
+    // ---- King of the Hill (section 5.1-5.3): a Team Deathmatch VARIANT --
+    // objective-based scoring instead of pure kill count. One fixed zone at
+    // the arena center; whichever team has sole presence inside it scores
+    // over time; both-present or empty pauses scoring. First to
+    // kothTargetScore wins a "round", then scores reset and play continues
+    // seamlessly in the same persistent room (same "never destroyed"
+    // lifecycle as Arena/Team/Survival-coop) rather than needing a whole
+    // separate round/lobby state machine.
+    this.kothScore = { red: 0, blue: 0 };
+    this.kothZone = { x: 0, z: 0, radius: 12 };
+    this.kothTargetScore = 100;
+    this.kothScorePerSec = 5;
+    this.kothControllingTeam = null; // 'red' | 'blue' | 'contested' | null (empty)
+
+    // ---- Endless / Survival mode (section 2.5) ----
+    // `survivalCoop` is flipped by RoomManager right after construction:
+    // false for a private per-socket run (createSurvivalRoom), true for the
+    // one persistent shared room everyone who picks "co-op" joins. Kept as
+    // a plain flag rather than a second `mode` string so every client HUD
+    // gate can stay a single `mode === 'survival'` check.
+    this.survivalCoop = false;
+    this.survivalWaveIndex = 0;
+    this.survivalWaveBreatherUntil = 0;
+    this.survivalStartedAt = Date.now();
+    this.survivalBossCycle = 0;
+    // Score/kill tracking (section 31-33) -- a SEPARATE number from the
+    // currency reward, shown on the result screen and compared against the
+    // client's own personal-best record. Solo-only in spirit (co-op never
+    // reads these for a reward), but tracked uniformly either way so the
+    // live HUD's kill counter always works.
+    this.survivalScore = 0;
+    this.survivalKills = 0;
+    this.survivalEliteKills = 0;
+    this.survivalMinibossKills = 0;
+    this.survivalBossKills = 0;
+
     // ---- Pre-stage confirmation (section: "Enemies must not attack before
-    // player confirms") — campaign-only combat gate. Enemies/the boss still
-    // spawn and are visible on schedule (see _updateWaves, never gated by
-    // this), but their AI (movement/aiming/firing/attack telegraphs/minion
-    // calls — all reached only through _updateBotAI's per-tick dispatch)
-    // and ALL damage (see _applyDamage) stay frozen until startCombat() is
-    // called, exactly once, in response to the player's explicit confirm.
-    // Arena/team rooms have no such screen, so they start already active.
-    this.combatActive = mode !== 'campaign';
+    // player confirms") — a combat gate shared by Campaign AND Survival
+    // (section 7: "reuse the existing pre-stage confirmation system").
+    // Enemies/the boss still spawn and are visible on schedule (see
+    // _updateWaves/_updateSurvivalWaves, never gated by this), but their AI
+    // (movement/aiming/firing/attack telegraphs/minion calls — all reached
+    // only through _updateBotAI's per-tick dispatch) and ALL damage (see
+    // _applyDamage) stay frozen until startCombat() is called, exactly
+    // once, in response to the player's explicit confirm. Arena/Team/KOTH
+    // have no such screen, so they start already active.
+    this.combatActive = mode !== 'campaign' && mode !== 'survival';
     if (mode === 'campaign') {
       console.log(`[Stage] Loading stage ${stageDef.chapter}.${stageDef.stageInChapter} (id ${stageDef.id}) | State = WAITING_FOR_CONFIRMATION`);
       console.log('[Combat] Enemy attacks disabled | [Combat] Boss attacks disabled | [Combat] Player damage disabled');
     }
+    // No unconditional "waiting for confirmation" log for survival here:
+    // RoomManager overrides combatActive back to true for the persistent
+    // co-op room immediately after construction (see RoomManager.js), so a
+    // log line printed from inside this constructor would be right for a
+    // solo room and wrong for the co-op one every single time.
   }
 
   // Called exactly once per stage, when the player presses the pre-stage
@@ -481,6 +553,11 @@ class Game {
     // readout, neither of which should have been silently ticking away
     // while the player was still reading the confirmation screen.
     this.stageStartedAt = now;
+    // Survival's own elapsed-time readout (section 9) is baselined off a
+    // SEPARATE timestamp (survivalStartedAt, not stageStartedAt) -- same
+    // "don't silently tick away time spent reading the confirm screen"
+    // reasoning applies here too.
+    if (this.mode === 'survival') this.survivalStartedAt = now;
     // Re-stamp any bot/boss timer that was stamped as an ABSOLUTE
     // Date.now()+delay at spawn time (which may have been well before this
     // moment, e.g. a boss that spawned during a long pre-confirm read) —
@@ -504,7 +581,7 @@ class Game {
     this.events.push({ type: 'combatStart' });
   }
 
-  addPlayer(id, name, loadout, perks, team) {
+  addPlayer(id, name, loadout, perks, team, skinId) {
     team = team && TEAM_COLORS[team] ? team : null;
     const spawn = randomSpawn(team);
     let color;
@@ -535,11 +612,22 @@ class Game {
       lastFireTime: 0,
       lastDamagedAt: 0,
       deathTime: 0,
+      // Tank skins (section 4.1-4.2 follow-up): validated against the same
+      // id whitelist equipSkin() re-checks, so a tampered client can only
+      // ever end up wearing a real skin, never an arbitrary string other
+      // players' clients would fail to look up.
+      skinId: SKIN_IDS.includes(skinId) ? skinId : 'classic',
+      disconnectedAt: 0, // reconnect (section 3.1-3.3): 0 = currently connected
       stamina: maxStamina,
       sprinting: false,
       staminaRegenAt: 0,
       killStreak: 0,
       killStreakExpiresAt: 0,
+      // Assist/streak tracking (section 5.5) -- human-only (see _applyDamage).
+      assists: 0,
+      deathStreak: 0,
+      recentDamageBy: new Map(),
+      lastPingAt: 0,
       input: { moveForward: 0, moveRight: 0, turretRot: spawn.rotY, firing: false, sprinting: false, lockedTargetId: null },
       ...freshCombatState(),
     };
@@ -573,6 +661,14 @@ class Game {
       stats.damage *= ELITE_DMG_MULT;
     }
 
+    // Daily modifier (section 2.6) — applies to every bot in this room
+    // (including the boss/minions/optional target), never to the human.
+    if (this.dailyModifier) {
+      if (this.dailyModifier.enemySpeedMult) stats.moveSpeed *= this.dailyModifier.enemySpeedMult;
+      if (this.dailyModifier.enemyHpMult) stats.maxHp = Math.round(stats.maxHp * this.dailyModifier.enemyHpMult);
+      if (this.dailyModifier.enemyFireRateMult) stats.fireCooldown /= this.dailyModifier.enemyFireRateMult;
+    }
+
     let bossState = null;
     if (opts.bossDef) {
       const mult = bossStatMult(opts.chapter || this.chapter);
@@ -600,6 +696,8 @@ class Game {
         ? opts.bossDef.name
         : opts.isMinion
         ? `Tăng Viện Trợ (${tierLabel(tierName)})`
+        : opts.isOptionalTarget
+        ? opts.optionalLabel || 'Mục Tiêu Phụ'
         : `${opts.isElite ? 'TINH NHUỆ — ' : ''}${role.label} (${tierLabel(tierName)})`,
       isBot: true,
       tierName,
@@ -607,6 +705,7 @@ class Game {
       isElite: !!opts.isElite,
       isBoss: !!opts.bossDef,
       isMinion: !!opts.isMinion,
+      isOptionalTarget: !!opts.isOptionalTarget,
       summonedBy: opts.summonedBy || null,
       boss: bossState,
       elite: opts.isElite
@@ -651,16 +750,28 @@ class Game {
     return bot;
   }
 
-  // Team Deathmatch: balances new joins onto whichever side currently has
-  // fewer players (coin flip on a tie) so a room never lopsidedly stacks one
-  // side.
-  assignTeam() {
+  // Team Deathmatch: live count of players currently on each side. Shared by
+  // (a) assignTeam()'s auto-balance below and (b) server/index.js's
+  // GET /api/team-counts endpoint, which lets the client show a live
+  // Red/Blue count + balance hint on the team-select screen BEFORE the
+  // player has actually joined this room.
+  getTeamCounts() {
     let red = 0;
     let blue = 0;
     for (const p of this.players.values()) {
       if (p.team === 'red') red++;
       else if (p.team === 'blue') blue++;
     }
+    return { red, blue };
+  }
+
+  // Team Deathmatch: balances new joins onto whichever side currently has
+  // fewer players (coin flip on a tie) so a room never lopsidedly stacks one
+  // side. Used both as (a) the server-side fallback when a join didn't
+  // request a valid team (see server/index.js) and (b) the client's
+  // explicit "Tự động cân bằng" choice on the team-select screen.
+  assignTeam() {
+    const { red, blue } = this.getTeamCounts();
     if (red === blue) return Math.random() < 0.5 ? 'red' : 'blue';
     return red < blue ? 'red' : 'blue';
   }
@@ -681,8 +792,67 @@ class Game {
     if (!player) return;
     this.players.delete(id);
     this._shockChainCooldown.delete(id);
+    // A departed player's traps leave with them — otherwise a disconnect
+    // would leave ownerless mines that nobody can be credited for.
+    for (const mine of this.mines.values()) {
+      if (mine.ownerId === id) this.mines.delete(mine.id);
+    }
     if (this.bossId === id) this.bossId = null;
     this.events.push({ type: 'leave', id, name: player.name });
+  }
+
+  // Reconnect (section 3.1-3.3): a player who briefly dropped connection
+  // gets a NEW socket.id when Socket.IO reconnects them, but must keep
+  // fighting as the SAME entity — same hp/position/kills/perks/mines, not a
+  // fresh spawn. This moves the player object to the new id and repoints
+  // every OTHER structure that referenced the old id (bullets/mines/zones'
+  // ownerId — friendly-fire's _sameTeam(ownerId, ...) would otherwise fail
+  // to find the player and misbehave). Returns the player, or null if
+  // oldId isn't actually in this room (the grace window already lapsed, or
+  // this session was never here).
+  reconnectPlayer(oldId, newId) {
+    const player = this.players.get(oldId);
+    if (!player) return null;
+    this.players.delete(oldId);
+    player.id = newId;
+    player.disconnectedAt = 0;
+    this.players.set(newId, player);
+    for (const bullet of this.bullets.values()) if (bullet.ownerId === oldId) bullet.ownerId = newId;
+    for (const mine of this.mines.values()) if (mine.ownerId === oldId) mine.ownerId = newId;
+    for (const zone of this.zones.values()) if (zone.ownerId === oldId) zone.ownerId = newId;
+    if (this.optionalObjectiveBotId === oldId) this.optionalObjectiveBotId = newId;
+    this.events.push({ type: 'reconnect', id: newId, name: player.name });
+    return player;
+  }
+
+  // Quick ping (section 6.2): never trusts `kind` beyond the fixed
+  // PING_KINDS allowlist, silently drops anything else or anything sent
+  // faster than PING_COOLDOWN_MS -- a malformed/spammy client just gets
+  // ignored rather than erroring, same "no crash, no unfair advantage"
+  // posture as every other player-driven input in this file.
+  requestPing(id, kind, now) {
+    const player = this.players.get(id);
+    if (!player || player.isBot || !player.alive) return;
+    // typeof check FIRST -- `PING_KINDS[kind]` alone would implicitly
+    // coerce a non-string kind (e.g. the single-element array ['attack'])
+    // into a matching key via JS's ToPropertyKey, letting a malformed
+    // payload slip through as if it were a real string.
+    if (typeof kind !== 'string' || !PING_KINDS[kind]) return;
+    if (now - (player.lastPingAt || 0) < PING_COOLDOWN_MS) return;
+    player.lastPingAt = now;
+    this.events.push({ type: 'ping', playerId: id, playerName: player.name, team: player.team || null, kind, x: player.x, z: player.z });
+  }
+
+  // Tank skins (section 4.1-4.2 follow-up): lets a player re-equip mid-
+  // session in a persistent room (Arena/Team/KOTH/co-op Survival never end,
+  // so "equip on join only" would strand them on their old skin until they
+  // leave). Solo/campaign rooms never outlive one join anyway, so this is
+  // simply unreachable there in practice.
+  equipSkin(id, skinId) {
+    const player = this.players.get(id);
+    if (!player || player.isBot) return;
+    if (typeof skinId !== 'string' || !SKIN_IDS.includes(skinId)) return;
+    player.skinId = skinId;
   }
 
   setInput(id, input) {
@@ -703,7 +873,12 @@ class Game {
     // convenience there; the id is echoed here ONLY so automatic support
     // weapons can prefer it as a targeting hint (section 19) — it never
     // otherwise touches server aim/movement/damage.
-    player.input.lockedTargetId = input.lockedTargetId != null ? String(input.lockedTargetId) : null;
+    // Input validation (section 3.5): capped length, not just a type
+    // coercion — this field is resent on every input tick (unlike name,
+    // sent once at join), so an unbounded string here is a cheap, repeated
+    // memory footprint for a malicious client to hand the server.
+    const lockedId = input.lockedTargetId != null ? String(input.lockedTargetId) : null;
+    player.input.lockedTargetId = lockedId && lockedId.length <= 64 ? lockedId : null;
   }
 
   _primaryHuman() {
@@ -1223,9 +1398,111 @@ class Game {
     }
   }
 
+  // ---- Deployable mines --------------------------------------------
+  // A mine is a placed trap, not a projectile: it never enters the bullet
+  // pipeline at all. Its whole life is three states, driven by
+  // _updateMines below:
+  //   arming  -> (armDelay)      cannot hurt anyone yet
+  //   armed   -> (enemy in range) starts its telegraph
+  //   triggered -> (telegraph)    detonates once, then is removed
+  // Damage is baked from the OWNER'S stats at deploy time, exactly like a
+  // bullet's damage is baked at fire time, so a mine can't retroactively
+  // get stronger from upgrades collected after it was placed.
+  _deployMine(player, weaponDef, now) {
+    const maxActive = weaponDef.mineMaxActive || 3;
+    const owned = [];
+    for (const m of this.mines.values()) {
+      if (m.ownerId === player.id) owned.push(m);
+    }
+    // At the cap, the oldest of this player's own mines gives way to the new
+    // one — a silently ignored input would just read as a broken fire button.
+    if (owned.length >= maxActive) {
+      owned.sort((a, b) => a.placedAt - b.placedAt);
+      this.mines.delete(owned[0].id);
+    }
+
+    const id = nextMineId++;
+    this.mines.set(id, {
+      id,
+      ownerId: player.id,
+      x: player.x,
+      z: player.z,
+      damage: player.stats.damage * weaponDef.damageMult,
+      state: 'arming',
+      placedAt: now,
+      armedAt: now + (weaponDef.mineArmDelayMs || 0),
+      expiresAt: now + (weaponDef.mineLifetimeMs || 30000),
+      detonateAt: 0,
+      detectRadius: weaponDef.mineDetectRadius || 5,
+      explodeRadius: (weaponDef.mineExplodeRadius || 6) * (player.stats.explosionRadiusMult || 1),
+      telegraphMs: weaponDef.mineTelegraphMs || 600,
+      knockback: weaponDef.mineKnockback || 0,
+    });
+    this.events.push({ type: 'mineDeploy', x: player.x, z: player.z, ownerId: player.id });
+  }
+
+  _updateMines(now) {
+    for (const mine of this.mines.values()) {
+      if (mine.state !== 'triggered' && now >= mine.expiresAt) {
+        // Un-sprung traps quietly rust away rather than accumulating
+        // forever across a long match.
+        this.mines.delete(mine.id);
+        continue;
+      }
+
+      if (mine.state === 'arming') {
+        if (now >= mine.armedAt) mine.state = 'armed';
+        continue;
+      }
+
+      if (mine.state === 'armed') {
+        for (const target of this.players.values()) {
+          if (!target.alive || this._sameTeam(mine.ownerId, target.id)) continue;
+          if (Math.hypot(target.x - mine.x, target.z - mine.z) > mine.detectRadius) continue;
+          mine.state = 'triggered';
+          mine.detonateAt = now + mine.telegraphMs;
+          this.events.push({ type: 'mineTrigger', x: mine.x, z: mine.z });
+          break;
+        }
+        continue;
+      }
+
+      if (now >= mine.detonateAt) {
+        this._mineExplode(mine, now);
+        this.mines.delete(mine.id);
+      }
+    }
+  }
+
+  // Same falloff + line-of-sight + knockback rule as explosive ammo and every
+  // boss AoE (see _resolveSplash/_bossAreaDamage) — a mine is never allowed
+  // to damage through a wall it can't see past.
+  _mineExplode(mine, now) {
+    this.events.push({ type: 'explosion', x: mine.x, z: mine.z });
+    for (const target of this.players.values()) {
+      if (!target.alive || this._sameTeam(mine.ownerId, target.id)) continue;
+      const dist = Math.hypot(target.x - mine.x, target.z - mine.z);
+      if (dist > mine.explodeRadius) continue;
+      if (!this._hasLineOfSight(mine.x, mine.z, target.x, target.z)) continue;
+      const falloff = Math.max(SPLASH_FALLOFF_MIN, 1 - (dist / mine.explodeRadius) * (1 - SPLASH_FALLOFF_MIN));
+      const wpMult = this._weakPointHitMult(target, mine.x, mine.z);
+      const dealt = this._applyDamage({ ownerId: mine.ownerId }, target, mine.damage * falloff * wpMult, now);
+      if (wpMult > 1 && dealt > 0) this.events.push({ type: 'weakPointHit', targetId: target.id, x: target.x, z: target.z });
+      if (mine.knockback > 0) this._applyKnockback(target, mine.x, mine.z, mine.knockback * falloff);
+    }
+  }
+
   _fireWeapon(player, now) {
     const weaponType = player.weapon.type;
     const weaponDef = WEAPON_TYPES[weaponType] || WEAPON_TYPES.normal;
+    // Placed weapons (mines) deliberately reuse this exact fire-input +
+    // cooldown path rather than adding a second "deploy" input, so every
+    // existing control scheme — keyboard, mouse, and the mobile fire
+    // button — drops a mine with no new plumbing (section 25).
+    if (weaponDef.deploy) {
+      this._deployMine(player, weaponDef, now);
+      return;
+    }
     const n = weaponDef.bulletsPerShot;
     const mid = (n - 1) / 2;
     for (let i = 0; i < n; i++) {
@@ -1473,18 +1750,30 @@ class Game {
 
     if (dmg > 0) target.lastDamagedAt = now; // gates the healthRegen upgrade's out-of-combat requirement
 
+    // Assist tracking (section 5.5): remember who ELSE recently hurt this
+    // target (excluding self-damage) so a death can credit an assist to
+    // anyone who contributed but didn't land the final blow. Only tracked
+    // on human targets (bots have no `recentDamageBy` map, and nobody
+    // needs credit for damaging one in solo Campaign anyway).
+    if (dmg > 0 && target.recentDamageBy && bullet.ownerId && bullet.ownerId !== target.id) {
+      target.recentDamageBy.set(bullet.ownerId, now);
+    }
+
     target.hp -= dmg;
     if (target.hp <= 0) {
       target.hp = 0;
       target.alive = false;
       target.deathTime = now;
       target.deaths++;
+      target.killStreak = 0;
+      if (!target.isBot) target.deathStreak = (target.deathStreak || 0) + 1;
       const killer = this.players.get(bullet.ownerId);
       if (killer) {
         killer.kills++;
         if (!killer.isBot) {
           killer.killStreak = Math.min(5, (killer.killStreak || 0) + 1);
           killer.killStreakExpiresAt = now + 8000;
+          killer.deathStreak = 0;
           if (killer.stats.onKillHealPct > 0) {
             killer.hp = Math.min(killer.stats.maxHp, killer.hp + killer.stats.maxHp * killer.stats.onKillHealPct);
           }
@@ -1493,13 +1782,45 @@ class Game {
       this.events.push({
         type: 'kill',
         killerId: bullet.ownerId,
-        killerName: killer ? killer.name : 'Unknown',
+        killerName: killer ? killer.name : bullet.ownerId == null ? 'Hiểm họa môi trường' : 'Unknown',
         victimId: target.id,
         victimName: target.name,
         amount: Math.round(dmg),
         executed: !!bullet.isExecution,
         crit: !!bullet.isCrit,
       });
+      if (target.recentDamageBy) {
+        const ASSIST_WINDOW_MS = 10000;
+        for (const [assisterId, hitAt] of target.recentDamageBy) {
+          if (assisterId === bullet.ownerId) continue; // the killer isn't also their own assist
+          if (now - hitAt > ASSIST_WINDOW_MS) continue;
+          const assister = this.players.get(assisterId);
+          if (!assister || assister.isBot) continue;
+          assister.assists = (assister.assists || 0) + 1;
+          this.events.push({ type: 'assist', playerId: assister.id, playerName: assister.name, victimId: target.id, victimName: target.name });
+        }
+        target.recentDamageBy.clear();
+      }
+      // Survival score/kill tracking (section 31-33) -- reuses the SAME
+      // killStreak field PvP already maintains (just incremented above) as
+      // the score multiplier, so a run that's also chaining kills scores
+      // faster without needing a second, parallel streak system.
+      if (this.mode === 'survival' && target.isBot) {
+        this.survivalKills++;
+        let points = SURVIVAL_CONFIG.scorePerKill;
+        if (target.isBoss) {
+          this.survivalBossKills++;
+          points = SURVIVAL_CONFIG.scorePerBoss;
+        } else if (target.isMiniboss) {
+          this.survivalMinibossKills++;
+          points = SURVIVAL_CONFIG.scorePerMiniboss;
+        } else if (target.isElite) {
+          this.survivalEliteKills++;
+          points = SURVIVAL_CONFIG.scorePerElite;
+        }
+        const streakMult = killer && !killer.isBot ? Math.min(SURVIVAL_CONFIG.maxStreakScoreMult, 1 + (killer.killStreak || 0) * SURVIVAL_CONFIG.streakScoreMultPerStack) : 1;
+        this.survivalScore += Math.round(points * streakMult);
+      }
       this._maybeDropLoot(target, now, killer);
     } else {
       this.events.push({
@@ -1617,6 +1938,38 @@ class Game {
     }
   }
 
+  // Boss weak points (section 1.9): a data-driven, OPTIONAL vulnerable arc
+  // on a boss's rear hull (see BOSS_DEFS' `weakPoint`). Returns null for
+  // every non-boss and every boss without one, so callers/the client only
+  // ever see this field when it's actually meaningful.
+  _weakPointInfo(target) {
+    if (!target.isBoss || !target.boss) return null;
+    const wp = target.boss.def.weakPoint;
+    if (!wp) return null;
+    return {
+      label: wp.label,
+      arcDeg: wp.arcDeg,
+      damageMult: wp.damageMult,
+      exposed: !wp.phases || wp.phases.includes(target.boss.phase),
+    };
+  }
+
+  // Returns the damage multiplier for a hit landing at (hitX, hitZ) against
+  // `target` — 1 for everything except a boss whose weak point is currently
+  // exposed AND was actually struck within its rear arc. The arc is measured
+  // from the target's OWN body facing (angle 0 away from bodyRot, i.e. dead
+  // astern), using the same sin/cos convention _spawnBullet already uses for
+  // every other direction in this file, so it turns correctly with the boss
+  // as it wheels around during the fight.
+  _weakPointHitMult(target, hitX, hitZ) {
+    const info = this._weakPointInfo(target);
+    if (!info || !info.exposed) return 1;
+    const hitAngle = Math.atan2(hitX - target.x, hitZ - target.z);
+    const rearAngle = target.bodyRot + Math.PI;
+    const arcRad = (info.arcDeg * Math.PI) / 180;
+    return Math.abs(angleDiff(rearAngle, hitAngle)) <= arcRad ? info.damageMult : 1;
+  }
+
   // Called once when a bullet's swept path first enters a target's hit
   // circle (see tick()). Handles the direct-damage + every ammo/support
   // status-effect side of the hit. Splash's own damage pass (_resolveSplash)
@@ -1624,7 +1977,9 @@ class Game {
   _resolveBulletHit(bullet, target, now) {
     let dealt = 0;
     if (bullet.splashRadius === 0) {
-      dealt = this._applyDamage(bullet, target, bullet.damage, now);
+      const wpMult = this._weakPointHitMult(target, bullet.x, bullet.z);
+      dealt = this._applyDamage(bullet, target, bullet.damage * wpMult, now);
+      if (wpMult > 1 && dealt > 0) this.events.push({ type: 'weakPointHit', targetId: target.id, x: bullet.x, z: bullet.z });
     }
 
     if (bullet.shockRadius > 0) this._applyShockPulse(bullet, target, now);
@@ -1692,7 +2047,9 @@ class Game {
       if (!this._hasLineOfSight(detonateAt.x, detonateAt.z, target.x, target.z)) continue;
       const distRatio = dist / bullet.splashRadius;
       const falloff = Math.max(SPLASH_FALLOFF_MIN, 1 - distRatio * (1 - SPLASH_FALLOFF_MIN));
-      this._applyDamage(bullet, target, bullet.damage * bullet.splashDamageMult * falloff, now);
+      const wpMult = this._weakPointHitMult(target, detonateAt.x, detonateAt.z);
+      const dealt = this._applyDamage(bullet, target, bullet.damage * bullet.splashDamageMult * falloff * wpMult, now);
+      if (wpMult > 1 && dealt > 0) this.events.push({ type: 'weakPointHit', targetId: target.id, x: target.x, z: target.z });
       if (bullet.knockback > 0) this._applyKnockback(target, detonateAt.x, detonateAt.z, bullet.knockback * falloff);
     }
   }
@@ -2174,7 +2531,8 @@ class Game {
       if (player.isBot && player.alive && this.combatActive) this._updateBotAI(player, now, dt);
 
       if (!player.alive) {
-        if (!player.isBot && (this.mode === 'arena' || this.mode === 'team') && now - player.deathTime >= RESPAWN_DELAY_MS) {
+        const respawns = this.mode === 'arena' || this.mode === 'team' || this.mode === 'koth' || (this.mode === 'survival' && this.survivalCoop);
+        if (!player.isBot && respawns && now - player.deathTime >= RESPAWN_DELAY_MS) {
           const spawn = randomSpawn(player.team);
           player.x = spawn.x;
           player.z = spawn.z;
@@ -2183,7 +2541,7 @@ class Game {
           player.hp = player.stats.maxHp;
           player.alive = true;
           Object.assign(player, freshCombatState());
-        } else if (!player.isBot && this.mode === 'campaign' && !this.finished) {
+        } else if (!player.isBot && (this.mode === 'campaign' || (this.mode === 'survival' && !this.survivalCoop)) && !this.finished) {
           this.finished = true;
           this.stageFailed = true;
           this.events.push({ type: 'stageFailed' });
@@ -2194,7 +2552,10 @@ class Game {
       for (const buff of Object.values(player.buffs)) {
         if (buff.active && now >= buff.expiresAt) buff.active = false;
       }
-      if (player.weapon.type !== 'normal' && now >= player.weapon.expiresAt) player.weapon.type = 'normal';
+      // Daily modifier (section 2.6): infiniteSpecialAmmo only ever applies
+      // to the human (bots don't hold a weapon pickup buff at all).
+      const infiniteWeapon = !player.isBot && this.dailyModifier && this.dailyModifier.infiniteWeaponBuff;
+      if (!infiniteWeapon && player.weapon.type !== 'normal' && now >= player.weapon.expiresAt) player.weapon.type = 'normal';
 
       const debuffs = player.debuffs;
       if (debuffs.slow.active && now >= debuffs.slow.expiresAt) {
@@ -2317,7 +2678,11 @@ class Game {
         const rapidMult = player.buffs.rapidfire.active ? RAPID_FIRE_MULT : 1;
         // Support role's aura (section 25) makes buffed nearby allies fire faster.
         const auraMult = player.isBot && player.ai && now < player.ai.buffedUntil ? ENEMY_ROLES.support.auraFireRateMult : 1;
-        const cooldown = player.stats.fireCooldown * weaponDef.cooldownMult * rapidMult * auraMult;
+        // Daily modifier (section 2.6): quickReload only ever touches the
+        // HUMAN's own cooldown, never a bot's (bots get enemyFireRateMult
+        // instead, applied once at spawn time in addBot).
+        const dailyPlayerMult = !player.isBot && this.dailyModifier && this.dailyModifier.playerCooldownMult ? this.dailyModifier.playerCooldownMult : 1;
+        const cooldown = player.stats.fireCooldown * weaponDef.cooldownMult * rapidMult * auraMult * dailyPlayerMult;
         if (now - player.lastFireTime >= cooldown) {
           player.lastFireTime = now;
           this._fireWeapon(player, now);
@@ -2327,6 +2692,11 @@ class Game {
 
     this._updateSupportWeapons(now, dt);
     this._updateZones(now);
+    this._updateMines(now);
+    this._updateHazards(now);
+    this._updateOptionalObjective(now);
+    this._updateSurvivalWaves(now);
+    this._updateKoth(now, dt);
     this._ensureObjectiveState();
     this._updateWaves(now);
 
@@ -2519,10 +2889,11 @@ class Game {
 
     if (this.waveIndex === -1) {
       this._spawnWave(0, now);
+      this._spawnOptionalObjective(now);
       return;
     }
 
-    const botsRemaining = Array.from(this.players.values()).some((p) => p.isBot && p.alive && !p.isBoss);
+    const botsRemaining = Array.from(this.players.values()).some((p) => p.isBot && p.alive && !p.isBoss && !p.isOptionalTarget);
     if (botsRemaining || now < this.waveBreatherUntil) return;
 
     if (this.waveIndex < waves.length - 1) {
@@ -2547,12 +2918,13 @@ class Game {
     // (constants.js has no notion of difficulty yet), so the difficulty
     // multiplier has to apply here, at ROLL time, instead.
     const diffMult = (DIFFICULTIES[this.difficulty] || DIFFICULTIES.normal).eliteChanceMult;
+    const dailyEliteMult = this.dailyModifier && this.dailyModifier.eliteChanceMult ? this.dailyModifier.eliteChanceMult : 1;
     for (const spec of wave) {
       let isElite = false;
       if (isHunt) {
         if (!this.huntTargetId) isElite = true; // exactly one guaranteed elite for the whole stage
       } else {
-        isElite = Math.random() < clamp((this.stageDef.eliteChance || 0) * diffMult, 0, 0.9);
+        isElite = Math.random() < clamp((this.stageDef.eliteChance || 0) * diffMult * dailyEliteMult, 0, 0.9);
       }
       const bot = this.addBot(spec.tier, { role: spec.role, chapter: this.chapter, difficulty: this.difficulty, isElite });
       if (isHunt && isElite && !this.huntTargetId) this.huntTargetId = bot.id;
@@ -2564,8 +2936,311 @@ class Game {
     // A shared base tier ('hard') for every boss — bossStatMult already
     // scales HP/damage far beyond any normal tier, so the base tier picked
     // here is just a stat starting point, not a balance lever.
-    this.addBot('hard', { role: 'normal', chapter: this.chapter, difficulty: this.difficulty, bossDef });
+    const boss = this.addBot('hard', { role: 'normal', chapter: this.chapter, difficulty: this.difficulty, bossDef });
     this.events.push({ type: 'bossSpawn', name: bossDef.name });
+    return boss;
+  }
+
+  // King of the Hill (section 5.1-5.3). `dt` is the fixed per-tick seconds
+  // (see tick()'s own `dt`), so scoring accrues at a steady rate regardless
+  // of tick rate. Reuses the same team-color keys (`TEAM_COLORS`) Team
+  // Deathmatch already validates joins against.
+  _updateKoth(now, dt) {
+    if (this.mode !== 'koth') return;
+    let red = 0;
+    let blue = 0;
+    const rSq = this.kothZone.radius * this.kothZone.radius;
+    for (const p of this.players.values()) {
+      if (!p.alive) continue;
+      const dx = p.x - this.kothZone.x;
+      const dz = p.z - this.kothZone.z;
+      if (dx * dx + dz * dz > rSq) continue;
+      if (p.team === 'red') red++;
+      else if (p.team === 'blue') blue++;
+    }
+
+    if (red > 0 && blue === 0) this.kothControllingTeam = 'red';
+    else if (blue > 0 && red === 0) this.kothControllingTeam = 'blue';
+    else if (red > 0 && blue > 0) this.kothControllingTeam = 'contested';
+    else this.kothControllingTeam = null;
+
+    if (this.kothControllingTeam === 'red' || this.kothControllingTeam === 'blue') {
+      this.kothScore[this.kothControllingTeam] += this.kothScorePerSec * dt;
+      if (this.kothScore[this.kothControllingTeam] >= this.kothTargetScore) {
+        this.events.push({ type: 'kothWin', team: this.kothControllingTeam });
+        this.kothScore.red = 0;
+        this.kothScore.blue = 0;
+      }
+    }
+  }
+
+  // Endless / Survival mode (section 2.5) — mirrors _updateWaves' exact
+  // breather/no-bots-left gating, but reads a procedurally-advancing wave
+  // counter instead of a fixed stageDef.waves array, since there is no
+  // "last wave" here.
+  _updateSurvivalWaves(now) {
+    if (this.mode !== 'survival' || this.finished || !this.combatActive) return;
+    if (this.survivalWaveIndex === 0) {
+      this._spawnSurvivalWave(now);
+      return;
+    }
+    const botsRemaining = Array.from(this.players.values()).some((p) => p.isBot && p.alive && !p.isBoss);
+    if (botsRemaining || now < this.survivalWaveBreatherUntil) return;
+    // Wave-clear score bonus (section 31-33) -- reaching here means every
+    // bot from the just-finished wave is dead, i.e. it was actually cleared.
+    this.survivalScore += SURVIVAL_CONFIG.scorePerWaveCleared;
+    // Daily Modifier integration (follow-up): co-op never "finishes" to pay
+    // solo's lump dailyBonus (see _getSurvivalStatus), so it pays a smaller
+    // amount to everyone currently in the room each real wave clear instead.
+    // Solo already gets its bonus folded into the one-time death reward, so
+    // this is co-op-only to avoid paying it twice.
+    if (this.dailyModifier && this.survivalCoop) {
+      this.events.push({ type: 'dailyBonus', amount: SURVIVAL_CONFIG.dailyCoopBonusPerWave });
+    }
+    if (this.survivalWaveIndex % SURVIVAL_CONFIG.bossEveryWaves === 0) {
+      this._spawnSurvivalBoss(now);
+    } else if (this.survivalWaveIndex % SURVIVAL_CONFIG.minibossEveryWaves === 0) {
+      this._spawnSurvivalMiniboss(now);
+    } else {
+      this._spawnSurvivalWave(now);
+    }
+  }
+
+  // Spawn-frequency scaling (section 18): the breather between waves
+  // shrinks a little each wave, never below minWaveBreatherMs -- pressure
+  // increases over a run without ever removing the player's recovery
+  // window outright.
+  _survivalBreatherMs() {
+    return Math.max(SURVIVAL_CONFIG.minWaveBreatherMs, SURVIVAL_CONFIG.waveBreatherMs - this.survivalWaveIndex * SURVIVAL_CONFIG.waveBreatherShrinkPerWave);
+  }
+
+  _survivalChapterFor(waveIndex) {
+    return Math.max(1, Math.min(10, Math.round(1 + waveIndex * SURVIVAL_CONFIG.chapterPerWave)));
+  }
+
+  // Growth PAST chapterScaling's own chapter-10 ceiling — chapterScaling
+  // already covers chapters 1-10 (so waves 1..softCapWave feel exactly like
+  // climbing Campaign's own chapters), this only kicks in afterward so an
+  // endless run never quietly plateaus.
+  _survivalBonusMult(waveIndex) {
+    const over = Math.max(0, waveIndex - SURVIVAL_CONFIG.softCapWave);
+    return {
+      hpMult: 1 + over * SURVIVAL_CONFIG.bonusHpPerWaveOverCap,
+      dmgMult: 1 + over * SURVIVAL_CONFIG.bonusDmgPerWaveOverCap,
+    };
+  }
+
+  _spawnSurvivalWave(now) {
+    this.survivalWaveIndex++;
+    this.survivalWaveBreatherUntil = now + this._survivalBreatherMs();
+    this.chapter = this._survivalChapterFor(this.survivalWaveIndex);
+    const scale = chapterScaling(this.chapter);
+    const diffMult = (DIFFICULTIES[this.difficulty] || DIFFICULTIES.normal).eliteChanceMult;
+    // Daily Modifier integration (follow-up): same eliteChanceMult parity
+    // campaign's own _spawnWave already applies (see dailyEliteMult there).
+    const dailyEliteMult = this.dailyModifier && this.dailyModifier.eliteChanceMult ? this.dailyModifier.eliteChanceMult : 1;
+    const bonus = this._survivalBonusMult(this.survivalWaveIndex);
+    const availableRoles = Object.keys(ENEMY_ROLES).filter((r) => (ROLE_UNLOCK_CHAPTER[r] || 1) <= this.chapter);
+    const count = Math.min(SURVIVAL_CONFIG.maxBotsPerWave, SURVIVAL_CONFIG.baseBotCount + Math.floor(this.survivalWaveIndex * SURVIVAL_CONFIG.botCountPerWave));
+    const tiers = ['easy', 'medium', 'hard'];
+    for (let i = 0; i < count; i++) {
+      const tierName = tiers[Math.min(tiers.length - 1, Math.floor((this.survivalWaveIndex + i) / 6) % tiers.length)];
+      const role = availableRoles[Math.floor(Math.random() * availableRoles.length)] || 'normal';
+      const isElite = Math.random() < clamp(scale.eliteChance * diffMult * dailyEliteMult, 0, 0.9);
+      const bot = this.addBot(tierName, { role, chapter: this.chapter, difficulty: this.difficulty, isElite });
+      bot.stats.maxHp = Math.round(bot.stats.maxHp * bonus.hpMult);
+      bot.hp = bot.stats.maxHp;
+      bot.stats.damage *= bonus.dmgMult;
+    }
+    this.events.push({ type: 'survivalWave', wave: this.survivalWaveIndex });
+  }
+
+  // A lone, clearly-labeled strong elite between boss waves (section 21) --
+  // reuses the existing elite-bot mechanic verbatim (no new AI/entity type),
+  // just boosted further and renamed so it reads as its own encounter tier
+  // distinct from both a regular elite and a full boss.
+  _spawnSurvivalMiniboss(now) {
+    this.survivalWaveIndex++;
+    this.survivalWaveBreatherUntil = now + this._survivalBreatherMs();
+    this.chapter = this._survivalChapterFor(this.survivalWaveIndex);
+    const bonus = this._survivalBonusMult(this.survivalWaveIndex);
+    const bot = this.addBot('hard', { role: 'normal', chapter: this.chapter, difficulty: this.difficulty, isElite: true });
+    bot.stats.maxHp = Math.round(bot.stats.maxHp * bonus.hpMult * SURVIVAL_CONFIG.minibossHpMult);
+    bot.hp = bot.stats.maxHp;
+    bot.stats.damage *= bonus.dmgMult * SURVIVAL_CONFIG.minibossDmgMult;
+    bot.name = 'MINIBOSS';
+    bot.isMiniboss = true;
+    this.events.push({ type: 'survivalMiniboss', id: bot.id, name: bot.name });
+  }
+
+  _spawnSurvivalBoss(now) {
+    this.survivalWaveIndex++;
+    this.survivalWaveBreatherUntil = now + this._survivalBreatherMs();
+    this.chapter = this._survivalChapterFor(this.survivalWaveIndex);
+    const bossDef = BOSS_DEFS[this.survivalBossCycle % BOSS_DEFS.length];
+    const cycle = this.survivalBossCycle;
+    this.survivalBossCycle++;
+    const bonus = this._survivalBonusMult(this.survivalWaveIndex);
+    const boss = this._spawnBoss(bossDef, now);
+    boss.stats.maxHp = Math.round(boss.stats.maxHp * bonus.hpMult);
+    boss.hp = boss.stats.maxHp;
+    boss.stats.damage *= bonus.dmgMult;
+    this._bossSpawned = false; // this room is reused for the NEXT boss wave too, unlike a one-boss campaign stage
+    // Boss + adds combinations (section 24) -- only from the boss's 2nd
+    // rotation onward, so the very first boss encounter stays a clean,
+    // readable 1-on-1 introduction to the mechanic.
+    if (cycle >= SURVIVAL_CONFIG.bossAddsFromCycle) {
+      for (let i = 0; i < SURVIVAL_CONFIG.bossAddsCount; i++) {
+        const add = this.addBot('medium', { role: 'normal', chapter: this.chapter, difficulty: this.difficulty, isElite: false });
+        add.stats.maxHp = Math.round(add.stats.maxHp * bonus.hpMult);
+        add.hp = add.stats.maxHp;
+        add.stats.damage *= bonus.dmgMult;
+      }
+    }
+  }
+
+  _getSurvivalStatus() {
+    const now = Date.now();
+    let enemiesRemaining = 0;
+    let miniboss = null;
+    for (const p of this.players.values()) {
+      if (!p.isBot || !p.alive || p.isBoss || p.isMinion) continue;
+      if (p.isMiniboss) miniboss = p;
+      else enemiesRemaining++;
+    }
+    const boss = this.bossId ? this.players.get(this.bossId) : null;
+    const rewardMult = (DIFFICULTIES[this.difficulty] || DIFFICULTIES.normal).rewardMult;
+    // Solo: dying ends the run (see the tick() respawn/end-of-run gate) and
+    // pays a lump reward built from waves survived + actual combat
+    // performance (section 34). Co-op: the room is eternal (players simply
+    // respawn), so it never "finishes" and never pays currency — same as
+    // Arena/Team Deathmatch already don't.
+    // Daily Modifier integration (follow-up): a solo run that was joined via
+    // the Daily Survival entry point folds in the SAME one-time bonus a
+    // cleared Daily Campaign stage pays, exactly once, at the same "run
+    // ends" moment the rest of this reward is computed.
+    const dailyBonus = this.dailyModifier ? Math.round(DAILY_BONUS_REWARD * rewardMult) : 0;
+    const reward =
+      !this.survivalCoop && this.stageFailed
+        ? Math.round(
+            (SURVIVAL_CONFIG.rewardPerWave * this.survivalWaveIndex +
+              SURVIVAL_CONFIG.rewardPerKill * this.survivalKills +
+              SURVIVAL_CONFIG.rewardPerElite * (this.survivalEliteKills + this.survivalMinibossKills) +
+              SURVIVAL_CONFIG.rewardPerBoss * this.survivalBossKills) *
+              rewardMult
+          ) + dailyBonus
+        : 0;
+    // "Next wave in Ns" (section 8/12) -- only meaningful once the current
+    // wave/miniboss/boss is fully cleared and the breather is what's
+    // actually being waited on.
+    const nextWaveInS = enemiesRemaining === 0 && !boss && !miniboss && this.combatActive ? Math.max(0, Math.ceil((this.survivalWaveBreatherUntil - now) / 1000)) : 0;
+    return {
+      stageId: null,
+      stageName: `Sinh Tồn${this.survivalCoop ? ' (Đồng đội)' : ''} — Đợt ${this.survivalWaveIndex || 1}`,
+      chapter: this.chapter,
+      nextStageId: null,
+      isLastStage: true,
+      combatActive: this.combatActive,
+      enemiesRemaining,
+      finished: this.survivalCoop ? false : this.finished,
+      cleared: false,
+      failed: this.survivalCoop ? false : this.stageFailed,
+      reward,
+      // Daily Modifier integration (follow-up): same shape campaign's own
+      // getStageStatus already returns -- showStageIntro/showStageResult on
+      // the client read this generically, no mode-specific branch needed.
+      dailyModifier: this.dailyModifier ? { label: this.dailyModifier.label, desc: this.dailyModifier.desc, bonusReward: DAILY_BONUS_REWARD } : null,
+      optionalObjective: null,
+      objective: {
+        type: 'endless',
+        wave: this.survivalWaveIndex || 1,
+        durationS: 0,
+        elapsedS: Math.floor((now - this.survivalStartedAt) / 1000),
+        objectiveHp: 0,
+        objectiveMaxHp: 0,
+        huntTargetId: null,
+        nextWaveInS,
+      },
+      // Survival-specific run stats (section 8/31-33) -- live during the
+      // run, and what the result screen (section 36-37) reads once it ends.
+      survivalStats: {
+        kills: this.survivalKills,
+        eliteKills: this.survivalEliteKills,
+        minibossKills: this.survivalMinibossKills,
+        bossKills: this.survivalBossKills,
+        score: this.survivalScore,
+      },
+      boss: boss
+        ? {
+            id: boss.id,
+            name: boss.boss.def.name,
+            hp: boss.hp,
+            maxHp: boss.stats.maxHp,
+            phase: boss.boss.phase,
+            enraged: boss.boss.enraged,
+            invuln: now < boss.boss.invulnUntil,
+            weakPoint: this._weakPointInfo(boss),
+          }
+        : miniboss
+        ? { id: miniboss.id, name: miniboss.name, hp: miniboss.hp, maxHp: miniboss.stats.maxHp, phase: 0, enraged: false, invuln: false, weakPoint: null, isMiniboss: true }
+        : null,
+    };
+  }
+
+  // Optional side objective (section 2.3-2.4): one extra, clearly-optional
+  // "radar station" bot placed at a fixed off-path point for this stage —
+  // spawned once, alongside wave 0. Deliberately excluded from every
+  // "enemies remaining"/"wave cleared" check elsewhere (see the
+  // `!p.isOptionalTarget` guards) so ignoring it never blocks the stage.
+  _spawnOptionalObjective(now) {
+    if (this._optionalObjectiveSpawned) return;
+    this._optionalObjectiveSpawned = true;
+    const def = this.stageDef.optionalObjective;
+    if (!def) return;
+    const bot = this.addBot(def.tier, {
+      role: 'normal',
+      chapter: this.chapter,
+      difficulty: this.difficulty,
+      isOptionalTarget: true,
+      optionalLabel: def.label,
+      spawnAt: { x: def.x, z: def.z },
+    });
+    this.optionalObjectiveBotId = bot.id;
+    this.events.push({ type: 'optionalObjectiveSpawn', label: def.label, x: def.x, z: def.z });
+  }
+
+  _updateOptionalObjective(now) {
+    if (this.optionalObjectiveDone || !this.optionalObjectiveBotId) return;
+    const bot = this.players.get(this.optionalObjectiveBotId);
+    if (bot && bot.alive) return;
+    this.optionalObjectiveDone = true;
+    const def = this.stageDef.optionalObjective;
+    this.events.push({ type: 'optionalObjectiveDone', label: def ? def.label : '', bonusReward: def ? def.bonusReward : 0 });
+  }
+
+  // Environmental hazards (section 2.1-2.2). See hazardPhaseAt (constants.js)
+  // for the pure "idle/telegraph/active" cycle math; this just applies tick
+  // damage while a hazard is actually active, at each hazard's own pace
+  // (never every single 50ms server tick). `ownerId: null` deliberately
+  // matches no player's id/team, so a hazard hurts EVERY tank equally —
+  // human or bot, either team — rather than being a "player's" damage.
+  _updateHazards(now) {
+    const hazards = this.stageDef && this.stageDef.hazards;
+    if (this.mode !== 'campaign' || !hazards || !hazards.length || !this.combatActive) return;
+    const elapsed = now - this.stageStartedAt;
+    hazards.forEach((hz, i) => {
+      if (hazardPhaseAt(hz, elapsed) !== 'active') return;
+      const state = this.hazardState[i];
+      if (now < state.nextTickAt) return;
+      state.nextTickAt = now + (hz.tickMs || 500);
+      for (const target of this.players.values()) {
+        if (!target.alive) continue;
+        const dx = target.x - hz.x;
+        const dz = target.z - hz.z;
+        if (dx * dx + dz * dz > hz.radius * hz.radius) continue;
+        this._applyDamage({ ownerId: null }, target, hz.damage, now);
+      }
+    });
   }
 
   // Section 22: per-objective-type win/fail resolution. Player death (the
@@ -2613,7 +3288,7 @@ class Game {
       return;
     }
 
-    const noBotsLeft = !Array.from(this.players.values()).some((p) => p.isBot && p.alive);
+    const noBotsLeft = !Array.from(this.players.values()).some((p) => p.isBot && p.alive && !p.isOptionalTarget);
     const wavesExhausted = this.waveIndex >= this.stageDef.waves.length - 1;
 
     if (obj.type === 'hunt') {
@@ -2633,17 +3308,25 @@ class Game {
     this.finished = true;
     this.stageCleared = true;
     const rewardMult = (DIFFICULTIES[this.difficulty] || DIFFICULTIES.normal).rewardMult;
-    this.events.push({ type: 'stageClear', reward: Math.round(this.stageDef.reward * rewardMult) });
+    const bonus = this.optionalObjectiveDone && this.stageDef.optionalObjective ? Math.round(this.stageDef.optionalObjective.bonusReward * rewardMult) : 0;
+    const dailyBonus = this.dailyModifier ? Math.round(DAILY_BONUS_REWARD * rewardMult) : 0;
+    this.events.push({
+      type: 'stageClear',
+      reward: Math.round(this.stageDef.reward * rewardMult) + bonus + dailyBonus,
+      bonusReward: bonus,
+      dailyBonus,
+    });
   }
 
   getStageStatus() {
+    if (this.mode === 'survival') return this._getSurvivalStatus();
     if (this.mode !== 'campaign') return null;
     // Boss-summoned minions (section: Boss Minion Tank Spawn System) are
     // deliberately excluded here — they never gate stage/objective
     // completion (only the boss itself does for a 'boss' objective), so
     // counting them would make the HUD's "enemies remaining" number lie
     // about what actually needs to be cleared to finish the stage.
-    const enemiesRemaining = Array.from(this.players.values()).filter((p) => p.isBot && p.alive && !p.isBoss && !p.isMinion).length;
+    const enemiesRemaining = Array.from(this.players.values()).filter((p) => p.isBot && p.alive && !p.isBoss && !p.isMinion && !p.isOptionalTarget).length;
     const boss = this.bossId ? this.players.get(this.bossId) : null;
     const rewardMult = (DIFFICULTIES[this.difficulty] || DIFFICULTIES.normal).rewardMult;
     return {
@@ -2663,7 +3346,15 @@ class Game {
       finished: this.finished,
       cleared: this.stageCleared,
       failed: this.stageFailed,
-      reward: this.stageCleared ? Math.round(this.stageDef.reward * rewardMult) : 0,
+      reward: this.stageCleared
+        ? Math.round(this.stageDef.reward * rewardMult) +
+          (this.optionalObjectiveDone && this.stageDef.optionalObjective ? Math.round(this.stageDef.optionalObjective.bonusReward * rewardMult) : 0) +
+          (this.dailyModifier ? Math.round(DAILY_BONUS_REWARD * rewardMult) : 0)
+        : 0,
+      optionalObjective: this.stageDef.optionalObjective
+        ? { label: this.stageDef.optionalObjective.label, done: this.optionalObjectiveDone, bonusReward: this.stageDef.optionalObjective.bonusReward }
+        : null,
+      dailyModifier: this.dailyModifier ? { label: this.dailyModifier.label, desc: this.dailyModifier.desc, bonusReward: DAILY_BONUS_REWARD } : null,
       objective: this.objective
         ? {
             type: this.objective.type,
@@ -2683,6 +3374,7 @@ class Game {
             phase: boss.boss.phase,
             enraged: boss.boss.enraged,
             invuln: Date.now() < boss.boss.invulnUntil,
+            weakPoint: this._weakPointInfo(boss),
           }
         : null,
     };
@@ -2704,7 +3396,13 @@ class Game {
         alive: p.alive,
         kills: p.kills,
         deaths: p.deaths,
+        assists: p.assists || 0,
+        killStreak: p.killStreak || 0,
+        deathStreak: p.deathStreak || 0,
         color: p.color,
+        // Tank skins (section 4.1-4.2 follow-up): bots never have one --
+        // client-side SKIN_CATALOG lookups on this simply no-op for null.
+        skinId: p.isBot ? null : p.skinId || 'classic',
         team: p.team || null,
         armorActive: p.buffs.armor.active,
         armorExpiresAt: p.buffs.armor.expiresAt,
@@ -2739,6 +3437,12 @@ class Game {
         bossPhase: p.isBoss && p.boss ? p.boss.phase : 0,
         bossEnraged: p.isBoss && p.boss ? p.boss.enraged : false,
         bossInvuln: p.isBoss && p.boss ? now < p.boss.invulnUntil : false,
+        // Weak point (section 1.9) — sent only when this boss def actually
+        // has one, so the client can draw the vulnerable arc + label and
+        // gate its "WEAK POINT!" hit feedback without hardcoding a second
+        // copy of BOSS_DEFS. `exposed` folds in the phase gate so the
+        // client never has to duplicate that check either.
+        weakPoint: this._weakPointInfo(p),
       })),
       bullets: Array.from(this.bullets.values()).map((b) => ({
         id: b.id,
@@ -2758,6 +3462,42 @@ class Game {
         z: pk.z,
         droppedAt: pk.droppedAt || 0,
       })),
+      // Mines are visible to everyone (fairness, section 11: no invisible
+      // damage) — the trap's value comes from its placement and the short
+      // telegraph window, not from being unseeable.
+      mines: Array.from(this.mines.values()).map((m) => ({
+        id: m.id,
+        ownerId: m.ownerId,
+        x: m.x,
+        z: m.z,
+        state: m.state,
+        radius: m.explodeRadius,
+      })),
+      // Environmental hazards (section 2.1-2.2) — phase computed fresh every
+      // snapshot from the shared, stateless hazardPhaseAt formula, so the
+      // client never needs its own clock-synced copy of the cycle math.
+      // King of the Hill (section 5.1-5.3) -- null outside koth rooms.
+      koth:
+        this.mode === 'koth'
+          ? {
+              red: Math.round(this.kothScore.red),
+              blue: Math.round(this.kothScore.blue),
+              target: this.kothTargetScore,
+              zone: this.kothZone,
+              controlling: this.kothControllingTeam,
+            }
+          : null,
+      hazards:
+        this.mode === 'campaign' && this.stageDef && this.stageDef.hazards && this.stageDef.hazards.length
+          ? this.stageDef.hazards.map((hz, i) => ({
+              type: hz.type,
+              label: hz.label,
+              x: hz.x,
+              z: hz.z,
+              radius: hz.radius,
+              phase: hazardPhaseAt(hz, now - this.stageStartedAt),
+            }))
+          : [],
       zones: Array.from(this.zones.values())
         .map((z) => ({ id: 'zone-' + z.id, kind: z.kind, x: z.x, z: z.z, radius: z.radius, expiresAt: z.expiresAt }))
         // A gravity core isn't tracked in `this.zones` (its gameplay pull/

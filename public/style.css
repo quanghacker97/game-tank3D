@@ -137,6 +137,21 @@ button {
 }
 .backBtn:hover { background: rgba(255,255,255,0.08); }
 
+/* ---------- Invite links (section 6.1) ---------- */
+.inviteBtn {
+  display: block;
+  margin: 12px auto 0;
+  padding: 9px 18px;
+  border: 1px solid rgba(77,168,255,0.4);
+  border-radius: 8px;
+  background: rgba(77,168,255,0.1);
+  color: #cfe4ff;
+  font-size: 13px;
+  font-weight: 600;
+}
+.inviteBtn:hover { background: rgba(77,168,255,0.2); }
+.inviteBtn.copied { border-color: #3ddc6c; color: #3ddc6c; }
+
 /* ---------- Stage select grid ---------- */
 
 #difficultyRow {
@@ -160,6 +175,90 @@ button {
   color: #1a1200;
   border-color: transparent;
 }
+
+/* ---------- Team select (Team Deathmatch) ---------- */
+
+#teamChoiceRow {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin: 18px 0 8px;
+  flex-wrap: wrap;
+}
+.teamChoiceBtn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 170px;
+  padding: 16px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.05);
+  color: #e8edf4;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.teamChoiceBtn:hover { filter: brightness(1.15); }
+.teamChoiceBtn.team-red { border-color: rgba(231,76,60,0.5); }
+.teamChoiceBtn.team-blue { border-color: rgba(52,152,219,0.5); }
+.teamChoiceLabel { font-size: 15px; }
+.teamChoiceCount { font-size: 12px; color: #9aa7ba; }
+.teamChoiceWarn {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffcf70;
+  background: rgba(255,176,32,0.15);
+  border: 1px solid rgba(255,176,32,0.4);
+  border-radius: 10px;
+  padding: 2px 8px;
+}
+
+/* ---------- Endless/Survival select ---------- */
+
+#endlessChoiceRow {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  margin: 18px 0 8px;
+  flex-wrap: wrap;
+}
+.endlessChoiceBtn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 220px;
+  padding: 18px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.05);
+  color: #e8edf4;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.endlessChoiceBtn:hover { filter: brightness(1.15); }
+.endlessChoiceLabel { font-size: 16px; }
+.endlessChoiceDesc { font-size: 11px; color: #9aa7ba; font-weight: 400; text-align: center; }
+.endlessChoiceCount { font-size: 12px; color: #ffcf70; }
+
+/* ---------- Daily Challenge ---------- */
+
+#dailyCard {
+  margin: 18px auto;
+  max-width: 360px;
+  padding: 16px 18px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.05);
+  text-align: center;
+}
+#dailyStageName { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+#dailyModifierLabel { font-size: 14px; font-weight: 700; color: #ffcf70; }
+#dailyModifierDesc { font-size: 12px; color: #9aa7ba; margin: 4px 0 10px; }
+#dailyBonus { font-size: 12px; color: #3ddc6c; font-weight: 600; }
 
 #chapterList {
   max-height: 56vh;
@@ -240,6 +339,77 @@ button {
 }
 
 #upgradeList { display: flex; flex-direction: column; gap: 12px; margin-bottom: 8px; max-height: 46vh; overflow-y: auto; }
+
+/* ---------- Garage: skins (section 4.1-4.2) ---------- */
+.skinGrid { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+.skinCard {
+  width: 140px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: linear-gradient(180deg, #1e2838, #141c28);
+  text-align: center;
+}
+.skinCard.equipped { border-color: #4da8ff; }
+.skinCard.locked { opacity: 0.75; }
+.skinPreview {
+  width: 100%;
+  height: 56px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  margin-bottom: 8px;
+}
+.skinLabel { font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+.skinBtn {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.08);
+  color: #e8edf4;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.skinBtn:disabled { opacity: 0.5; }
+
+/* ---------- Achievements (section 4.3) ---------- */
+#achievementList { display: flex; flex-direction: column; gap: 10px; max-height: 56vh; overflow-y: auto; padding-right: 4px; margin-bottom: 12px; }
+.achievementRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: linear-gradient(180deg, #1e2838, #141c28);
+  opacity: 0.6;
+}
+.achievementRow.unlocked { opacity: 1; border-color: rgba(77,168,255,0.4); }
+.achievementIcon { font-size: 24px; width: 32px; text-align: center; }
+.achievementInfo { flex: 1; text-align: left; }
+.achievementName { font-weight: 700; font-size: 14px; }
+.achievementDesc { font-size: 11.5px; color: #9aa7ba; }
+.achievementReward { font-size: 12px; font-weight: 700; color: #ffd166; white-space: nowrap; }
+
+/* ---------- Tutorial (section 6.3) ---------- */
+#tutorialCard {
+  margin: 20px auto;
+  max-width: 380px;
+  padding: 24px 20px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: linear-gradient(180deg, #1e2838, #141c28);
+  text-align: center;
+}
+#tutorialIcon { font-size: 42px; margin-bottom: 10px; }
+#tutorialTitle { font-size: 18px; font-weight: 800; margin-bottom: 8px; }
+#tutorialDesc { font-size: 13px; color: #cfd6e0; line-height: 1.6; }
+#tutorialProgress { margin-top: 14px; font-size: 11.5px; color: #9aa7ba; }
+#tutorialButtons { display: flex; gap: 10px; justify-content: center; }
+#tutorialButtons .backBtn, #tutorialButtons .menuBtn { margin-top: 0; }
 
 .upgradeRow {
   display: flex;
@@ -481,6 +651,23 @@ button {
   opacity: 0.85;
 }
 
+/* Connection status (section 3.3): hidden while stable, only surfaces
+   during an actual drop/reconnect/failure — clear but unobtrusive. */
+#connStatus {
+  position: absolute;
+  top: 90px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.6);
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  z-index: 20;
+}
+#connStatus.reconnecting { color: #ffcf70; }
+#connStatus.failed { color: #ff5c5c; }
+
 #hudCurrency {
   position: absolute;
   top: 16px;
@@ -570,6 +757,48 @@ button {
 }
 #objectiveBar { height: 100%; width: 100%; background: #ffd166; transition: width 0.2s ease; }
 
+#optionalObjectiveRow { margin-top: 3px; }
+#optionalObjectiveLabel { color: #9aa7ba; font-size: 11px; }
+#optionalObjectiveRow.done #optionalObjectiveLabel { color: #3ddc6c; }
+
+/* ---------- Survival HUD (section 8) ---------- */
+#survivalStatsRow {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  margin-top: 5px;
+  font-size: 12px;
+  font-weight: 700;
+}
+#survivalTimeStat { color: #cfe4ff; }
+#survivalKillsStat { color: #ff8a8a; }
+#survivalScoreStat { color: #ffd166; }
+#survivalNextWaveRow {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: #9aa7ba;
+  text-align: center;
+}
+#survivalWarningBanner {
+  position: absolute;
+  top: 130px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 22px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  background: rgba(0,0,0,0.65);
+  color: #ff5c5c;
+  text-shadow: 0 0 8px rgba(255,92,92,0.6);
+  animation: survivalWarnPulse 0.6s ease-in-out infinite alternate;
+}
+@keyframes survivalWarnPulse {
+  from { opacity: 0.75; transform: translateX(-50%) scale(1); }
+  to { opacity: 1; transform: translateX(-50%) scale(1.04); }
+}
+
 /* Boss HUD (sections 27-34): a cinematic, top-center bar — separate from
    the small nameTag HP bars every normal enemy uses. */
 #bossHud {
@@ -613,6 +842,18 @@ button {
   border-right: 2px solid rgba(0,0,0,0.55);
 }
 #bossHudPhasePips span:last-child { border-right: none; }
+
+/* Weak point readout (section 1.9) */
+#bossHudWeakPoint {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #9aa7ba;
+}
+#bossHudWeakPoint.exposed {
+  color: #ffcf70;
+  text-shadow: 0 0 6px rgba(255, 176, 32, 0.6);
+}
 
 /* Boss attack telegraph (section 31) — a plain, readable warning shown at
    the boss's screen position before an attack executes. */
@@ -698,6 +939,31 @@ button {
   white-space: nowrap;
 }
 
+/* ---------- Quick ping row (section 6.2) ---------- */
+#pingRow {
+  position: absolute;
+  bottom: 34px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+}
+#pingRow.hidden { display: none; }
+.pingBtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(0,0,0,0.45);
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pingBtn:hover { background: rgba(255,255,255,0.15); }
+.pingBtn:active { transform: scale(0.9); }
+
 #deathBanner {
   position: absolute;
   top: 40%;
@@ -716,6 +982,26 @@ button {
   margin-bottom: 6px;
 }
 #deathSub { font-size: 14px; color: #cfd6e0; }
+
+/* Spectator mode (section 5.4) */
+#spectateRow {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  pointer-events: auto;
+}
+#spectateRow button {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(255,255,255,0.08);
+  color: #e8edf4;
+  font-size: 14px;
+  font-weight: 700;
+}
+#spectateLabel { font-size: 12.5px; color: #ffcf70; font-weight: 600; }
 
 #stageIntroOverlay {
   position: absolute;
@@ -896,6 +1182,8 @@ button {
 .combatNumber.neutral { font-size: 12px; color: #b8c2cf; }
 .combatNumber.heal { font-size: 17px; color: #3ddc6c; }
 .combatNumber.blocked { font-size: 13px; color: #c99bff; }
+.combatNumber.weakpoint { font-size: 19px; font-weight: 800; color: #ffcf70; text-shadow: 0 0 6px rgba(255, 176, 32, 0.7); }
+.combatNumber.ping { font-size: 14px; font-weight: 700; color: #ffd166; text-shadow: 0 0 5px rgba(255, 209, 102, 0.6); }
 
 /* ---------- Touch controls (mobile) ---------- */
 

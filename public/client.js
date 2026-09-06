@@ -168,20 +168,30 @@ const SKIN_CATALOG = [
 // against server-side) -- `check` reads from profile.stats, which the kill/
 // stage-clear event handlers below update as the player actually plays.
 // Each unlocks exactly once and pays a one-time currency reward.
+// `category` (menu redesign follow-up) is a purely presentational grouping
+// for the Achievements filter tabs -- it never affects `check`/unlock logic.
 const ACHIEVEMENTS = [
-  { id: 'first_blood', label: 'Máu Đầu Tiên', desc: 'Hạ gục 1 kẻ địch', icon: '🎯', reward: 20, check: (s) => s.totalKills >= 1 },
-  { id: 'kill_100', label: 'Sát Thủ', desc: 'Hạ gục 100 kẻ địch', icon: '💀', reward: 100, check: (s) => s.totalKills >= 100 },
-  { id: 'boss_10', label: 'Khắc Tinh Trùm', desc: 'Đánh bại 10 trùm', icon: '👑', reward: 150, check: (s) => s.bossKills >= 10 },
-  { id: 'chapter_3', label: 'Vượt Ải', desc: 'Hoàn thành Chương 3', icon: '🏆', reward: 80, check: (s) => s.maxChapterCleared >= 3 },
-  { id: 'chapter_5_hard', label: 'Thử Thách Thực Sự', desc: 'Hoàn thành Chương 5 ở độ Khó trở lên', icon: '🔥', reward: 120, check: (s) => s.chapter5HardOrAbove },
-  { id: 'tdm_kills_100', label: 'Chiến Binh Tổ Đội', desc: 'Đạt 100 lượt hạ gục trong Tổ đội', icon: '🚩', reward: 100, check: (s) => s.tdmKills >= 100 },
-  { id: 'no_damage_5', label: 'Không Thể Chạm Tới', desc: 'Hạ 5 kẻ địch liên tiếp mà không mất máu', icon: '⭐', reward: 90, check: (s) => s.noDamageKillStreak >= 5 },
-  { id: 'special_ammo_100', label: 'Vũ Khí Đặc Biệt', desc: 'Hạ 100 kẻ địch bằng đạn đặc biệt', icon: '💥', reward: 100, check: (s) => s.specialAmmoKills >= 100 },
+  { id: 'first_blood', label: 'Máu Đầu Tiên', desc: 'Hạ gục 1 kẻ địch', icon: '🎯', reward: 20, category: 'combat', check: (s) => s.totalKills >= 1 },
+  { id: 'kill_100', label: 'Sát Thủ', desc: 'Hạ gục 100 kẻ địch', icon: '💀', reward: 100, category: 'combat', check: (s) => s.totalKills >= 100 },
+  { id: 'boss_10', label: 'Khắc Tinh Trùm', desc: 'Đánh bại 10 trùm', icon: '👑', reward: 150, category: 'campaign', check: (s) => s.bossKills >= 10 },
+  { id: 'chapter_3', label: 'Vượt Ải', desc: 'Hoàn thành Chương 3', icon: '🏆', reward: 80, category: 'campaign', check: (s) => s.maxChapterCleared >= 3 },
+  { id: 'chapter_5_hard', label: 'Thử Thách Thực Sự', desc: 'Hoàn thành Chương 5 ở độ Khó trở lên', icon: '🔥', reward: 120, category: 'campaign', check: (s) => s.chapter5HardOrAbove },
+  { id: 'tdm_kills_100', label: 'Chiến Binh Tổ Đội', desc: 'Đạt 100 lượt hạ gục trong Tổ đội', icon: '🚩', reward: 100, category: 'pvp', check: (s) => s.tdmKills >= 100 },
+  { id: 'no_damage_5', label: 'Không Thể Chạm Tới', desc: 'Hạ 5 kẻ địch liên tiếp mà không mất máu', icon: '⭐', reward: 90, category: 'special', check: (s) => s.noDamageKillStreak >= 5 },
+  { id: 'special_ammo_100', label: 'Vũ Khí Đặc Biệt', desc: 'Hạ 100 kẻ địch bằng đạn đặc biệt', icon: '💥', reward: 100, category: 'special', check: (s) => s.specialAmmoKills >= 100 },
   // Survival integration (section 62) -- reuses this SAME achievement
   // system/array, never a second one.
-  { id: 'survival_5min', label: 'Bền Bỉ', desc: 'Sống sót 5 phút trong Sinh Tồn', icon: '⏱️', reward: 80, check: (s) => s.survivalMaxTimeS >= 300 },
-  { id: 'survival_wave_25', label: 'Không Gì Cản Nổi', desc: 'Đạt Đợt sóng 25 trong Sinh Tồn', icon: '🌊', reward: 150, check: (s) => s.survivalMaxWave >= 25 },
-  { id: 'survival_boss_1', label: 'Kẻ Diệt Trùm Sinh Tồn', desc: 'Đánh bại 1 boss trong chế độ Sinh Tồn', icon: '👑', reward: 100, check: (s) => s.survivalBossKillsTotal >= 1 },
+  { id: 'survival_5min', label: 'Bền Bỉ', desc: 'Sống sót 5 phút trong Sinh Tồn', icon: '⏱️', reward: 80, category: 'survival', check: (s) => s.survivalMaxTimeS >= 300 },
+  { id: 'survival_wave_25', label: 'Không Gì Cản Nổi', desc: 'Đạt Đợt sóng 25 trong Sinh Tồn', icon: '🌊', reward: 150, category: 'survival', check: (s) => s.survivalMaxWave >= 25 },
+  { id: 'survival_boss_1', label: 'Kẻ Diệt Trùm Sinh Tồn', desc: 'Đánh bại 1 boss trong chế độ Sinh Tồn', icon: '👑', reward: 100, category: 'survival', check: (s) => s.survivalBossKillsTotal >= 1 },
+];
+const ACHIEVEMENT_FILTERS = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'combat', label: 'Chiến đấu' },
+  { id: 'campaign', label: 'Chiến dịch' },
+  { id: 'survival', label: 'Sinh tồn' },
+  { id: 'pvp', label: 'PvP' },
+  { id: 'special', label: 'Đặc biệt' },
 ];
 // PvP kill/assist currency (section 5.5) -- see the 'kill'/'assist' event
 // handlers below for where these are actually granted.
@@ -795,6 +805,8 @@ const canvas = document.getElementById('scene');
 const loginOverlay = document.getElementById('loginOverlay');
 const elPanelName = document.getElementById('panelName');
 const elPanelMenu = document.getElementById('panelMenu');
+const elPanelPlay = document.getElementById('panelPlay');
+const elPanelSettings = document.getElementById('panelSettings');
 const elPanelTeamSelect = document.getElementById('panelTeamSelect');
 const elPanelKothSelect = document.getElementById('panelKothSelect');
 const elPanelEndlessSelect = document.getElementById('panelEndlessSelect');
@@ -861,12 +873,31 @@ const kothRedWarnEl = document.getElementById('kothRedWarn');
 const kothBlueWarnEl = document.getElementById('kothBlueWarn');
 const kothSelectBackEl = document.getElementById('kothSelectBack');
 const difficultyRowEl = document.getElementById('difficultyRow');
+const endlessDifficultyRowEl = document.getElementById('endlessDifficultyRow');
+const settingsDifficultyRowEl = document.getElementById('settingsDifficultyRow');
 const chapterListEl = document.getElementById('chapterList');
 const stagesBackEl = document.getElementById('stagesBack');
 const garageBackEl = document.getElementById('garageBack');
 const garageCurrencyEl = document.getElementById('garageCurrency');
 const upgradeListEl = document.getElementById('upgradeList');
 const upgradeCategoryTabsEl = document.getElementById('upgradeCategoryTabs');
+const btnPlayEl = document.getElementById('btnPlay');
+const playBackEl = document.getElementById('playBack');
+const btnSettingsEl = document.getElementById('btnSettings');
+const settingsBackEl = document.getElementById('settingsBack');
+const settingsNameValueEl = document.getElementById('settingsNameValue');
+const settingsChangeNameEl = document.getElementById('settingsChangeName');
+const settingsMuteToggleEl = document.getElementById('settingsMuteToggle');
+const settingsConnStatusEl = document.getElementById('settingsConnStatus');
+const achievementProgressLabelEl = document.getElementById('achievementProgressLabel');
+const achievementProgressBarEl = document.getElementById('achievementProgressBar');
+const achievementFilterTabsEl = document.getElementById('achievementFilterTabs');
+const tutorialSectionJumpEl = document.getElementById('tutorialSectionJump');
+const joinLoadingOverlayEl = document.getElementById('joinLoadingOverlay');
+const joinLoadingTextEl = document.getElementById('joinLoadingText');
+const joinLoadingRetryRowEl = document.getElementById('joinLoadingRetryRow');
+const joinLoadingRetryBtnEl = document.getElementById('joinLoadingRetryBtn');
+const joinLoadingBackBtnEl = document.getElementById('joinLoadingBackBtn');
 
 const hud = document.getElementById('hud');
 const campaignBarEl = document.getElementById('campaignBar');
@@ -1802,6 +1833,13 @@ let mode = null; // 'arena' | 'campaign'
 // or just sitting at the menu (not worth alarming anyone about).
 let lastJoinOpts = null;
 let inRoom = false;
+// Session isolation (bug fix): the room whose 'state' packets the client is
+// currently authorized to process. Distinct from `mode` (gameplay/UI
+// state, not a unique session identity — two Campaign runs both report
+// mode:'campaign' but are different rooms). Set from the server's own
+// authoritative roomId on 'init', cleared to null the moment a room is
+// left — never derived from mode name or generated client-side.
+let currentRoomId = null;
 const connStatusEl = document.getElementById('connStatus');
 function showConnStatus(state) {
   if (state === 'stable') {
@@ -1998,6 +2036,18 @@ function resetGameState() {
   combatNumbers.length = 0;
   selfId = null;
   lockedTargetId = null;
+  // Session isolation (bug fix): every path that reaches resetGameState()
+  // (leave-to-menu, retry/rejoin, joinError, reconnect_failed) means the
+  // room the client WAS in is no longer valid -- invalidate it immediately,
+  // synchronously, without waiting for any server acknowledgement, so the
+  // 'state' handler's roomId check starts rejecting stale packets right
+  // away (see currentRoomId's declaration and the 'state'/'init' handlers).
+  currentRoomId = null;
+  // Stale Daily/Daily-Survival flags must not leak into whatever mode is
+  // joined next (they're only ever (re)set inside joinGame() for the run
+  // that's actually starting).
+  lastJoinWasDaily = false;
+  lastJoinWasDailySurvival = false;
   stageResultShown = false;
   latestStageStatus = null;
   stageIntroOverlayEl.classList.add('hidden');
@@ -2073,11 +2123,27 @@ function escapeHtml(s) {
 
 // ---------- Screen navigation ----------
 function showPanel(name) {
-  for (const el of [elPanelName, elPanelMenu, elPanelTeamSelect, elPanelKothSelect, elPanelEndlessSelect, elPanelDaily, elPanelAchievements, elPanelTutorial, elPanelStages, elPanelGarage]) el.classList.add('hidden');
+  for (const el of [
+    elPanelName,
+    elPanelMenu,
+    elPanelPlay,
+    elPanelSettings,
+    elPanelTeamSelect,
+    elPanelKothSelect,
+    elPanelEndlessSelect,
+    elPanelDaily,
+    elPanelAchievements,
+    elPanelTutorial,
+    elPanelStages,
+    elPanelGarage,
+  ])
+    el.classList.add('hidden');
   loginOverlay.classList.remove('hidden');
   ({
     name: elPanelName,
     menu: elPanelMenu,
+    play: elPanelPlay,
+    settings: elPanelSettings,
     teamSelect: elPanelTeamSelect,
     kothSelect: elPanelKothSelect,
     endlessSelect: elPanelEndlessSelect,
@@ -2089,6 +2155,43 @@ function showPanel(name) {
   })[name].classList.remove('hidden');
 }
 
+// ---------- Centralized menu navigation (section 5/21/29) ----------
+// A single history STACK backing every submenu's Back button + Escape key,
+// instead of each back button hardcoding its parent ("always return to
+// Menu"). navigateTo() is the ONE entry point every "go to screen X" call
+// should use; resetNav() is for the handful of moments that legitimately
+// start a FRESH navigation context (first login, returning from a finished
+// match, a failed join) where the old history is no longer meaningful.
+let navStack = [];
+let currentPanelName = null;
+function navigateTo(name) {
+  if (currentPanelName && currentPanelName !== name) navStack.push(currentPanelName);
+  showPanel(name);
+  currentPanelName = name;
+}
+function resetNav(name) {
+  navStack = [];
+  showPanel(name);
+  currentPanelName = name;
+}
+function goBack() {
+  const prev = navStack.pop();
+  showPanel(prev || 'menu');
+  currentPanelName = prev || 'menu';
+}
+
+// Escape-to-go-back (section 22): only while an actual menu screen is
+// showing (the login/menu overlay visible) -- never touches in-game
+// Escape's native pointer-lock-release behavior (see the pointerlockchange
+// handler below), since the overlay is always hidden while in a match.
+// A SEPARATE listener from the in-game one on purpose, so this can never
+// interfere with movement/combat key handling.
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Escape') return;
+  if (loginOverlay.classList.contains('hidden')) return;
+  if (currentPanelName && currentPanelName !== 'menu' && currentPanelName !== 'name') goBack();
+});
+
 function refreshMenuTexts() {
   menuNameEl.textContent = profile.name;
   menuCurrencyEl.textContent = profile.currency;
@@ -2096,8 +2199,12 @@ function refreshMenuTexts() {
 }
 
 // ---------- Stage select: 10 chapters x 8 stages (section 37) ----------
-function renderDifficultyRow() {
-  difficultyRowEl.innerHTML = '';
+// Difficulty (section 12) is ONE global profile setting shared by every
+// mode that reads it (Campaign, Survival) -- rather than a separate picker
+// per mode, every container showing it stays in sync via one render call.
+function renderDifficultyRow(container) {
+  if (!container) return;
+  container.innerHTML = '';
   for (const key of DIFFICULTY_KEYS) {
     const btn = document.createElement('button');
     btn.className = 'difficultyBtn' + (profile.difficulty === key ? ' active' : '');
@@ -2105,10 +2212,24 @@ function renderDifficultyRow() {
     btn.addEventListener('click', () => {
       profile.difficulty = key;
       saveProfile();
-      renderDifficultyRow();
+      renderAllDifficultyRows();
     });
-    difficultyRowEl.appendChild(btn);
+    container.appendChild(btn);
   }
+}
+function renderAllDifficultyRows() {
+  renderDifficultyRow(difficultyRowEl);
+  renderDifficultyRow(endlessDifficultyRowEl);
+  renderDifficultyRow(settingsDifficultyRowEl);
+}
+
+// ---------- Settings (section 26/35 follow-up) ----------
+function renderSettings() {
+  settingsNameValueEl.textContent = profile.name;
+  refreshMuteBtn();
+  settingsMuteToggleEl.textContent = Sound.isMuted() ? '🔇 Tắt' : '🔊 Bật';
+  settingsConnStatusEl.textContent = socket.connected ? '🟢 Ổn định' : '🟡 Đang kết nối lại';
+  renderAllDifficultyRows();
 }
 
 // ---------- Team select: live counts + balance hint (free choice, never blocked) ----------
@@ -2160,6 +2281,7 @@ function renderKothSelect() {
 
 // ---------- Endless/Survival select: solo vs co-op, live co-op headcount ----------
 function renderEndlessSelect() {
+  renderAllDifficultyRows();
   const best = profile.survivalBest;
   const bestMm = String(Math.floor(best.time / 60)).padStart(2, '0');
   const bestSs = String(best.time % 60).padStart(2, '0');
@@ -2217,13 +2339,28 @@ function renderTutorialStep() {
   tutorialDescEl.textContent = step.desc;
   tutorialProgressEl.textContent = `Bước ${tutorialStepIndex + 1}/${TUTORIAL_STEPS.length}`;
   btnTutorialNextEl.textContent = tutorialStepIndex === TUTORIAL_STEPS.length - 1 ? 'Bắt đầu chơi' : 'Tiếp theo';
+
+  // Quick section-jump row (menu redesign follow-up) -- lets a returning
+  // player jump straight to a topic instead of only stepping through
+  // linearly; reuses the SAME steps data, no new content invented.
+  tutorialSectionJumpEl.innerHTML = '';
+  TUTORIAL_STEPS.forEach((s, i) => {
+    const btn = document.createElement('button');
+    btn.className = 'tutorialJumpBtn' + (i === tutorialStepIndex ? ' active' : '');
+    btn.textContent = `${s.icon} ${s.title}`;
+    btn.addEventListener('click', () => {
+      tutorialStepIndex = i;
+      renderTutorialStep();
+    });
+    tutorialSectionJumpEl.appendChild(btn);
+  });
 }
 
 function startTutorial(onFinish) {
   tutorialStepIndex = 0;
   tutorialOnFinish = onFinish;
   renderTutorialStep();
-  showPanel('tutorial');
+  navigateTo('tutorial');
 }
 
 function finishTutorial() {
@@ -2240,12 +2377,30 @@ btnTutorialNextEl.addEventListener('click', () => {
   else renderTutorialStep();
 });
 btnTutorialSkipEl.addEventListener('click', finishTutorial);
-btnTutorialEl.addEventListener('click', () => startTutorial(() => showPanel('menu')));
+btnTutorialEl.addEventListener('click', () => startTutorial(() => goBack()));
 
 // ---------- Achievements (section 4.3) ----------
+let achievementFilter = 'all';
 function renderAchievements() {
+  const totalUnlocked = ACHIEVEMENTS.filter((a) => profile.achievements[a.id]).length;
+  achievementProgressLabelEl.textContent = `${totalUnlocked} / ${ACHIEVEMENTS.length} hoàn thành`;
+  achievementProgressBarEl.style.width = `${ACHIEVEMENTS.length ? (totalUnlocked / ACHIEVEMENTS.length) * 100 : 0}%`;
+
+  achievementFilterTabsEl.innerHTML = '';
+  for (const f of ACHIEVEMENT_FILTERS) {
+    const btn = document.createElement('button');
+    btn.className = 'achievementFilterTab' + (achievementFilter === f.id ? ' active' : '');
+    btn.textContent = f.label;
+    btn.addEventListener('click', () => {
+      achievementFilter = f.id;
+      renderAchievements();
+    });
+    achievementFilterTabsEl.appendChild(btn);
+  }
+
   achievementListEl.innerHTML = '';
-  for (const a of ACHIEVEMENTS) {
+  const visible = achievementFilter === 'all' ? ACHIEVEMENTS : ACHIEVEMENTS.filter((a) => a.category === achievementFilter);
+  for (const a of visible) {
     const unlocked = !!profile.achievements[a.id];
     const row = document.createElement('div');
     row.className = 'achievementRow' + (unlocked ? ' unlocked' : '');
@@ -2255,14 +2410,14 @@ function renderAchievements() {
         <div class="achievementName">${escapeHtml(a.label)}</div>
         <div class="achievementDesc">${escapeHtml(a.desc)}</div>
       </div>
-      <div class="achievementReward">${unlocked ? 'Đã đạt' : `+${a.reward} Xu`}</div>
+      <div class="achievementReward">${unlocked ? '✓ Đã đạt' : `+${a.reward} Xu`}</div>
     `;
     achievementListEl.appendChild(row);
   }
 }
 
 function renderStages() {
-  renderDifficultyRow();
+  renderAllDifficultyRows();
   chapterListEl.innerHTML = '';
   for (let chapter = 1; chapter <= 10; chapter++) {
     const stages = STAGES_META.filter((s) => s.chapter === chapter);
@@ -2487,6 +2642,44 @@ function buildJoinPayload(opts) {
   };
 }
 
+// ---------- Join loading state (section 33 follow-up) ----------
+// The gap between "clicked Deploy" and the server's 'init' actually
+// arriving previously had no feedback at all (the login overlay just
+// vanished onto a bare scene). A stuck/dropped request now surfaces as an
+// explicit failure with Retry/Back instead of leaving the player staring
+// at nothing forever.
+const JOIN_LOADING_TIMEOUT_MS = 8000;
+let joinLoadingTimeoutHandle = null;
+function showJoinLoading(show) {
+  if (joinLoadingTimeoutHandle) {
+    clearTimeout(joinLoadingTimeoutHandle);
+    joinLoadingTimeoutHandle = null;
+  }
+  if (!show) {
+    joinLoadingOverlayEl.classList.add('hidden');
+    return;
+  }
+  joinLoadingTextEl.textContent = 'ĐANG TRIỂN KHAI...';
+  joinLoadingRetryRowEl.classList.add('hidden');
+  joinLoadingOverlayEl.classList.remove('hidden');
+  joinLoadingTimeoutHandle = setTimeout(() => {
+    joinLoadingTextEl.textContent = 'Không thể kết nối tới trận đấu.';
+    joinLoadingRetryRowEl.classList.remove('hidden');
+  }, JOIN_LOADING_TIMEOUT_MS);
+}
+joinLoadingRetryBtnEl.addEventListener('click', () => {
+  if (!lastJoinOpts) return;
+  showJoinLoading(true);
+  socket.emit('join', buildJoinPayload(lastJoinOpts));
+});
+joinLoadingBackBtnEl.addEventListener('click', () => {
+  showJoinLoading(false);
+  inRoom = false;
+  lastJoinOpts = null;
+  loginOverlay.classList.remove('hidden');
+  resetNav('menu');
+});
+
 function joinGame(opts) {
   // Daily Survival (follow-up) reports its raw 'survivalDaily' mode to the
   // SERVER (buildJoinPayload sends opts.mode as-is) so it can pick the
@@ -2498,6 +2691,7 @@ function joinGame(opts) {
   lastJoinWasDailySurvival = opts.mode === 'survivalDaily';
   lastJoinOpts = opts;
   inRoom = true;
+  showJoinLoading(true);
   loginOverlay.classList.add('hidden');
   socket.emit('join', buildJoinPayload(opts));
 }
@@ -2529,7 +2723,7 @@ function leaveRoomAndGoMenu() {
   hud.classList.remove('active');
   refreshMenuTexts();
   renderStages();
-  showPanel('menu');
+  resetNav('menu');
   stageTransitionInFlight = false;
 }
 
@@ -2584,7 +2778,7 @@ function leaveAndRejoinDaily() {
 
 // ---------- UI wiring ----------
 function proceedPastLogin() {
-  if (!tryAutoJoinFromInvite()) showPanel('menu');
+  if (!tryAutoJoinFromInvite()) resetNav('menu');
 }
 
 if (profile.name) {
@@ -2617,58 +2811,76 @@ nameInputEl.focus();
 changeNameLinkEl.addEventListener('click', (e) => {
   e.preventDefault();
   nameInputEl.value = profile.name;
-  showPanel('name');
+  navigateTo('name');
+});
+
+btnPlayEl.addEventListener('click', () => navigateTo('play'));
+playBackEl.addEventListener('click', () => goBack());
+btnSettingsEl.addEventListener('click', () => {
+  renderSettings();
+  navigateTo('settings');
+});
+settingsBackEl.addEventListener('click', () => goBack());
+settingsChangeNameEl.addEventListener('click', () => {
+  nameInputEl.value = profile.name;
+  navigateTo('name');
+});
+settingsMuteToggleEl.addEventListener('click', () => {
+  Sound.resume();
+  Sound.setMuted(!Sound.isMuted());
+  refreshMuteBtn();
+  renderSettings();
 });
 
 btnArenaEl.addEventListener('click', () => joinGame({ mode: 'arena' }));
 btnTeamEl.addEventListener('click', () => {
   renderTeamSelect();
-  showPanel('teamSelect');
+  navigateTo('teamSelect');
 });
 btnTeamRedEl.addEventListener('click', () => joinGame({ mode: 'team', team: 'red' }));
 btnTeamBlueEl.addEventListener('click', () => joinGame({ mode: 'team', team: 'blue' }));
 btnTeamAutoEl.addEventListener('click', () => joinGame({ mode: 'team' }));
-teamSelectBackEl.addEventListener('click', () => showPanel('menu'));
+teamSelectBackEl.addEventListener('click', () => goBack());
 btnKothEl.addEventListener('click', () => {
   renderKothSelect();
-  showPanel('kothSelect');
+  navigateTo('kothSelect');
 });
 btnKothRedEl.addEventListener('click', () => joinGame({ mode: 'koth', team: 'red' }));
 btnKothBlueEl.addEventListener('click', () => joinGame({ mode: 'koth', team: 'blue' }));
 btnKothAutoEl.addEventListener('click', () => joinGame({ mode: 'koth' }));
-kothSelectBackEl.addEventListener('click', () => showPanel('menu'));
+kothSelectBackEl.addEventListener('click', () => goBack());
 btnCampaignEl.addEventListener('click', () => {
   renderStages();
-  showPanel('stages');
+  navigateTo('stages');
 });
 btnEndlessEl.addEventListener('click', () => {
   renderEndlessSelect();
-  showPanel('endlessSelect');
+  navigateTo('endlessSelect');
 });
 btnEndlessSoloEl.addEventListener('click', () => joinGame({ mode: 'survival', coop: false }));
 btnEndlessCoopEl.addEventListener('click', () => joinGame({ mode: 'survival', coop: true }));
-endlessSelectBackEl.addEventListener('click', () => showPanel('menu'));
+endlessSelectBackEl.addEventListener('click', () => goBack());
 btnDailyEl.addEventListener('click', () => {
   renderDaily();
-  showPanel('daily');
+  navigateTo('daily');
 });
 btnDailyStartEl.addEventListener('click', () => joinGame({ mode: 'daily' }));
 btnDailySurvivalSoloEl.addEventListener('click', () => joinGame({ mode: 'survivalDaily', coop: false }));
 btnDailySurvivalCoopEl.addEventListener('click', () => joinGame({ mode: 'survivalDaily', coop: true }));
-dailyBackEl.addEventListener('click', () => showPanel('menu'));
+dailyBackEl.addEventListener('click', () => goBack());
 btnAchievementsEl.addEventListener('click', () => {
   renderAchievements();
-  showPanel('achievements');
+  navigateTo('achievements');
 });
-achievementsBackEl.addEventListener('click', () => showPanel('menu'));
+achievementsBackEl.addEventListener('click', () => goBack());
 btnGarageEl.addEventListener('click', () => {
   renderGarage();
-  showPanel('garage');
+  navigateTo('garage');
 });
-stagesBackEl.addEventListener('click', () => showPanel('menu'));
+stagesBackEl.addEventListener('click', () => goBack());
 garageBackEl.addEventListener('click', () => {
   refreshMenuTexts();
-  showPanel('menu');
+  goBack();
 });
 
 menuLeaveBtnEl.addEventListener('click', leaveRoomAndGoMenu);
@@ -2724,11 +2936,12 @@ socket.on('connect_error', () => {
 
 socket.on('joinError', (err) => {
   console.warn('joinError', err && err.message);
+  showJoinLoading(false);
   inRoom = false;
   resetGameState();
   hud.classList.remove('active');
   refreshMenuTexts();
-  showPanel('menu');
+  resetNav('menu');
   stageTransitionInFlight = false; // the attempted transition failed -- release the guard so the player can retry
 });
 
@@ -2759,7 +2972,7 @@ socket.on('reconnect_failed', () => {
   resetGameState();
   hud.classList.remove('active');
   refreshMenuTexts();
-  showPanel('menu');
+  resetNav('menu');
 });
 
 // ---------- Game state sync ----------
@@ -2887,7 +3100,12 @@ function updateTeamScoreboard(players) {
 
 socket.on('init', (data) => {
   inRoom = true;
+  showJoinLoading(false);
   showConnStatus('stable');
+  // Session isolation (bug fix): establishes the authoritative room context
+  // BEFORE anything else -- every 'state' packet after this is checked
+  // against it (see the 'state' handler below).
+  currentRoomId = data.roomId;
   selfId = data.selfId;
   mode = data.mode;
   arenaHalfSize = data.arenaHalfSize;
@@ -2948,6 +3166,12 @@ socket.on('playerLeft', (p) => {
 });
 
 socket.on('state', (msg) => {
+  // Session isolation (bug fix): the server's tick loop broadcasts on a
+  // fixed interval independent of when it processes this client's
+  // 'leaveRoom' -- a packet for a room already left (or not yet the new
+  // one) can still be in flight. Reject it OUTRIGHT, before touching
+  // snapshot/stageStatus/events, rather than partially applying it.
+  if (!currentRoomId || msg.roomId !== currentRoomId) return;
   applySnapshot(msg.snapshot, false);
   latestBulletData = msg.snapshot.bullets;
   latestPickupData = msg.snapshot.pickups || [];
@@ -4339,6 +4563,93 @@ const HAZARD_VISUALS = {
   piston: { color: 0xb0b0b0, icon: '🔨' },
 };
 
+// Toxic bubbles / fire flames (follow-up): a handful of extra small meshes
+// per hazard so toxic/fire finally read as distinct from each other (and
+// from laser/piston) instead of "a differently-tinted disc". Deliberately
+// NOT a particle system (this project avoids one, see spawnBurst's own
+// comment above) -- a small FIXED count of persistent, reused meshes,
+// animated with plain trig, same spirit as spawnBurst/updateBursts.
+//
+// These are NOT children of a hazard's `group` (createHazardMesh below) --
+// that group is scaled by radius on X/Z only (see updateHazardsVisual's
+// `entry.group.scale.set(entry.radius, 1, entry.radius)`), which would
+// squash a child sphere/cone into a flattened ellipsoid as radius grows.
+// Instead these are separate top-level scene objects, positioned in real
+// world units each frame from entry.x/entry.z/entry.radius directly.
+const HAZARD_BUBBLE_COUNT = 6;
+const HAZARD_FLAME_COUNT = 5;
+const HAZARD_BUBBLE_RISE_HEIGHT = 1.3;
+// Same shared-geometry / per-instance-material split as _burstGeometry
+// above -- geometry is identical for every bubble/flame (only per-instance
+// transform/color/opacity ever differ), so disposeObject3D must NEVER be
+// called on these (it would dispose the shared geometry out from under
+// every other hazard still using it) -- see disposeHazardEffects below,
+// which disposes only the per-instance material.
+const _hazardBubbleGeometry = new THREE.SphereGeometry(0.2, 6, 5);
+// Cone's local origin is shifted to its BASE (not center) so animating
+// scaleY grows the flame upward from the ground instead of scaling
+// symmetrically through it.
+const _hazardFlameGeometry = new THREE.ConeGeometry(0.18, 0.6, 5);
+_hazardFlameGeometry.translate(0, 0.3, 0);
+// Reused Color instances for flame flicker (section 40: no per-frame
+// allocations) -- mutated in place via .copy()/.lerp() every frame, never
+// replaced with `new THREE.Color()`.
+const _flameColorRed = new THREE.Color(0xff3300);
+const _flameColorOrange = new THREE.Color(0xff8a1a);
+const _flameColorYellow = new THREE.Color(0xffd23f);
+
+function createHazardBubbles() {
+  const bubbles = [];
+  for (let i = 0; i < HAZARD_BUBBLE_COUNT; i++) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0xcfffb0, transparent: true, opacity: 0, depthWrite: false });
+    const mesh = new THREE.Mesh(_hazardBubbleGeometry, mat);
+    scene.add(mesh);
+    bubbles.push({
+      mesh,
+      angle: Math.random() * Math.PI * 2,
+      // Stays well inside the hazard footprint (section 20's radius*0.75 cap).
+      distFrac: 0.1 + Math.random() * 0.6,
+      speed: 0.3 + Math.random() * 0.25, // full rise cycles per second
+      phaseOffset: Math.random(),
+      wobbleFreq: 1.4 + Math.random() * 1.2,
+      wobblePhase: Math.random() * Math.PI * 2,
+    });
+  }
+  return bubbles;
+}
+
+function createHazardFlames() {
+  const flames = [];
+  for (let i = 0; i < HAZARD_FLAME_COUNT; i++) {
+    const mat = new THREE.MeshBasicMaterial({ color: 0xff8a1a, transparent: true, opacity: 0.85, depthWrite: false });
+    const mesh = new THREE.Mesh(_hazardFlameGeometry, mat);
+    scene.add(mesh);
+    flames.push({
+      mesh,
+      angle: Math.random() * Math.PI * 2,
+      distFrac: 0.1 + Math.random() * 0.55, // anchored, unlike bubbles -- no rise/drift
+      speed: 4 + Math.random() * 3, // flicker frequency, per-flame so they're not in lockstep
+      phase: Math.random() * Math.PI * 2,
+      colorPhase: Math.random() * Math.PI * 2,
+    });
+  }
+  return flames;
+}
+
+// Removes+disposes a hazard's bubble/flame meshes -- deliberately separate
+// from disposeObject3D (see the shared-geometry comment above) so the
+// module-level _hazardBubbleGeometry/_hazardFlameGeometry are never touched.
+function disposeHazardEffects(entry) {
+  for (const b of entry.bubbles) {
+    scene.remove(b.mesh);
+    b.mesh.material.dispose();
+  }
+  for (const f of entry.flames) {
+    scene.remove(f.mesh);
+    f.mesh.material.dispose();
+  }
+}
+
 function createHazardMesh(type) {
   const meta = HAZARD_VISUALS[type] || HAZARD_VISUALS.toxic;
   const group = new THREE.Group();
@@ -4367,7 +4678,13 @@ function createHazardMesh(type) {
   group.add(ring);
 
   scene.add(group);
-  return { group, disc, ring };
+  return {
+    group,
+    disc,
+    ring,
+    bubbles: type === 'toxic' ? createHazardBubbles() : [],
+    flames: type === 'fire' ? createHazardFlames() : [],
+  };
 }
 
 function syncHazards() {
@@ -4389,6 +4706,7 @@ function syncHazards() {
     if (!seen.has(i)) {
       scene.remove(entry.group);
       disposeObject3D(entry.group);
+      disposeHazardEffects(entry);
       hazardMeshes.delete(i);
     }
   }
@@ -4412,6 +4730,36 @@ function updateHazardsVisual(tSec) {
       const pulse = 1 - 0.15 + Math.sin(tSec * 3) * 0.15;
       entry.disc.material.opacity = 0.28 * pulse;
       entry.ring.material.opacity = 0.75 * pulse;
+    }
+
+    for (const b of entry.bubbles) {
+      // Stateless time-based cycle (no mutable per-frame progress to drift
+      // or need resetting) -- section 21-23's "rise, fade, reset, repeat"
+      // falls out of a simple sawtooth of absolute time.
+      const cycle = ((tSec * b.speed + b.phaseOffset) % 1 + 1) % 1;
+      const dist = entry.radius * b.distFrac;
+      const wobble = Math.sin(tSec * b.wobbleFreq + b.wobblePhase) * 0.18;
+      b.mesh.position.set(
+        entry.x + Math.cos(b.angle) * dist + wobble,
+        0.15 + cycle * HAZARD_BUBBLE_RISE_HEIGHT,
+        entry.z + Math.sin(b.angle) * dist + wobble
+      );
+      let opacity;
+      if (cycle < 0.15) opacity = cycle / 0.15;
+      else if (cycle < 0.7) opacity = 1;
+      else opacity = 1 - (cycle - 0.7) / 0.3;
+      b.mesh.material.opacity = opacity * 0.55;
+    }
+
+    for (const f of entry.flames) {
+      const dist = entry.radius * f.distFrac;
+      f.mesh.position.set(entry.x + Math.cos(f.angle) * dist, 0, entry.z + Math.sin(f.angle) * dist);
+      const flicker = 0.5 + 0.5 * Math.sin(tSec * f.speed + f.phase);
+      f.mesh.scale.set(0.9 + flicker * 0.15, 0.7 + flicker * 0.6, 0.9 + flicker * 0.15);
+      const colorT = 0.5 + 0.5 * Math.sin(tSec * 2.2 + f.colorPhase);
+      if (colorT < 0.5) f.mesh.material.color.copy(_flameColorRed).lerp(_flameColorOrange, colorT * 2);
+      else f.mesh.material.color.copy(_flameColorOrange).lerp(_flameColorYellow, (colorT - 0.5) * 2);
+      f.mesh.material.opacity = 0.75 + 0.2 * Math.sin(tSec * f.speed * 1.3 + f.phase);
     }
   }
 }

@@ -160,6 +160,7 @@ io.on('connection', (socket) => {
           socket.emit('init', {
             selfId: socket.id,
             mode: pending.mode,
+            roomId: pending.roomId,
             arenaHalfSize: ARENA_HALF_SIZE,
             obstacles: OBSTACLES,
             snapshot: game.snapshot(),
@@ -223,6 +224,7 @@ io.on('connection', (socket) => {
       socket.emit('init', {
         selfId: socket.id,
         mode: 'campaign',
+        roomId,
         arenaHalfSize: ARENA_HALF_SIZE,
         obstacles: OBSTACLES,
         snapshot: game.snapshot(),
@@ -246,6 +248,7 @@ io.on('connection', (socket) => {
       socket.emit('init', {
         selfId: socket.id,
         mode: 'team',
+        roomId: RoomManager.TEAM_ROOM_ID,
         arenaHalfSize: ARENA_HALF_SIZE,
         obstacles: OBSTACLES,
         snapshot: game.snapshot(),
@@ -265,6 +268,7 @@ io.on('connection', (socket) => {
       socket.emit('init', {
         selfId: socket.id,
         mode: 'koth',
+        roomId: RoomManager.KOTH_ROOM_ID,
         arenaHalfSize: ARENA_HALF_SIZE,
         obstacles: OBSTACLES,
         snapshot: game.snapshot(),
@@ -287,6 +291,7 @@ io.on('connection', (socket) => {
         socket.emit('init', {
           selfId: socket.id,
           mode: 'survival',
+          roomId,
           arenaHalfSize: ARENA_HALF_SIZE,
           obstacles: OBSTACLES,
           snapshot: game.snapshot(),
@@ -304,6 +309,7 @@ io.on('connection', (socket) => {
         socket.emit('init', {
           selfId: socket.id,
           mode: 'survival',
+          roomId,
           arenaHalfSize: ARENA_HALF_SIZE,
           obstacles: OBSTACLES,
           snapshot: game.snapshot(),
@@ -320,6 +326,7 @@ io.on('connection', (socket) => {
       socket.emit('init', {
         selfId: socket.id,
         mode: 'arena',
+        roomId: RoomManager.ARENA_ROOM_ID,
         arenaHalfSize: ARENA_HALF_SIZE,
         obstacles: OBSTACLES,
         snapshot: game.snapshot(),
@@ -416,7 +423,13 @@ setInterval(() => {
   for (const [roomId, game] of RoomManager.allRooms()) {
     game.tick();
     const events = game.flushEvents();
+    // Session isolation (bug fix): every broadcast carries the room it
+    // actually came from, so a client that has since left this room (or
+    // joined a different one) can reject a packet that was already queued
+    // for delivery before the server processed its 'leaveRoom' -- see
+    // public/client.js's 'state' handler and currentRoomId.
     io.to(roomId).emit('state', {
+      roomId,
       t: Date.now(),
       snapshot: game.snapshot(),
       events,

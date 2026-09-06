@@ -128,6 +128,17 @@
     </div>
   </div>
 
+  <div id="joinLoadingOverlay" class="hidden">
+    <div id="joinLoadingBox">
+      <div id="joinLoadingSpinner"></div>
+      <div id="joinLoadingText">ĐANG TRIỂN KHAI...</div>
+      <div id="joinLoadingRetryRow" class="hidden">
+        <button id="joinLoadingRetryBtn">THỬ LẠI</button>
+        <button id="joinLoadingBackBtn">QUAY LẠI</button>
+      </div>
+    </div>
+  </div>
+
   <div id="loginOverlay">
     <div id="panelName" class="panel">
       <h1>Tank3D Arena</h1>
@@ -138,18 +149,78 @@
     </div>
 
     <div id="panelMenu" class="panel hidden">
-      <h1>Tank3D Arena</h1>
+      <h1>TANK3D ARENA</h1>
       <div class="currencyBadge">💰 <span id="menuCurrency">0</span> Xu</div>
-      <button class="menuBtn" id="btnArena">⚔️ Đấu trường (PvP)</button>
-      <button class="menuBtn" id="btnTeam">🚩 Tổ đội (Team Deathmatch)</button>
-      <button class="menuBtn" id="btnKoth">⛰️ Chiếm Điểm (King of the Hill)</button>
-      <button class="menuBtn" id="btnCampaign">🎯 Chiến dịch (Vượt ải)</button>
-      <button class="menuBtn" id="btnEndless">♾️ Sinh Tồn (Endless)</button>
-      <button class="menuBtn" id="btnDaily">📅 Thử Thách Hàng Ngày</button>
-      <button class="menuBtn" id="btnGarage">🔧 Gara nâng cấp</button>
+      <button class="menuBtn menuBtnPrimary" id="btnPlay">🚀 TRIỂN KHAI</button>
+      <button class="menuBtn" id="btnGarage">🔧 Gara Nâng Cấp</button>
       <button class="menuBtn" id="btnAchievements">🏆 Thành Tựu</button>
-      <button class="menuBtn" id="btnTutorial">📖 Xem Hướng Dẫn</button>
+      <button class="menuBtn" id="btnTutorial">📖 Hướng Dẫn Chơi</button>
+      <button class="menuBtn" id="btnSettings">⚙️ Cài Đặt</button>
       <div id="menuHint">Xin chào, <span id="menuName"></span> · <a href="#" id="changeNameLink">đổi tên</a></div>
+    </div>
+
+    <div id="panelPlay" class="panel wide hidden">
+      <h1>Chọn Chế Độ</h1>
+      <p>Chọn một chế độ chơi để bắt đầu triển khai.</p>
+      <div id="modeCardGrid">
+        <button class="modeCard" id="btnCampaign">
+          <div class="modeCardIcon">🎯</div>
+          <div class="modeCardName">CHIẾN DỊCH</div>
+          <div class="modeCardDesc">Vượt qua các ải ngày càng khó, hạ boss, nhận thưởng</div>
+          <div class="modeCardMeta">10 CHƯƠNG · NHIỀU ẢI</div>
+        </button>
+        <button class="modeCard" id="btnEndless">
+          <div class="modeCardIcon">♾️</div>
+          <div class="modeCardName">SINH TỒN</div>
+          <div class="modeCardDesc">Chống lại các đợt sóng kẻ địch vô tận — càng lâu càng khó</div>
+          <div class="modeCardMeta">MỘT MÌNH · CÙNG ĐỘI</div>
+        </button>
+        <button class="modeCard" id="btnTeam">
+          <div class="modeCardIcon">🚩</div>
+          <div class="modeCardName">TỔ ĐỘI</div>
+          <div class="modeCardDesc">Chọn phe, phối hợp tiêu diệt đội đối thủ</div>
+          <div class="modeCardMeta">TEAM DEATHMATCH</div>
+        </button>
+        <button class="modeCard" id="btnArena">
+          <div class="modeCardIcon">⚔️</div>
+          <div class="modeCardName">ĐẤU TRƯỜNG</div>
+          <div class="modeCardDesc">Hỗn chiến tự do, mọi người vì chính mình</div>
+          <div class="modeCardMeta">FREE-FOR-ALL</div>
+        </button>
+        <button class="modeCard" id="btnKoth">
+          <div class="modeCardIcon">⛰️</div>
+          <div class="modeCardName">CHIẾM ĐIỂM</div>
+          <div class="modeCardDesc">Giữ điểm cao nhất lâu hơn đội đối thủ để chiến thắng</div>
+          <div class="modeCardMeta">KING OF THE HILL</div>
+        </button>
+        <button class="modeCard modeCardDaily" id="btnDaily">
+          <div class="modeCardIcon">📅</div>
+          <div class="modeCardName">THỬ THÁCH HÀNG NGÀY</div>
+          <div class="modeCardDesc">Hiệu ứng đặc biệt hôm nay — áp dụng cho Chiến dịch hoặc Sinh Tồn, thưởng thêm</div>
+        </button>
+      </div>
+      <button class="backBtn" id="playBack">← Quay lại</button>
+    </div>
+
+    <div id="panelSettings" class="panel wide hidden">
+      <h1>Cài Đặt</h1>
+      <div class="settingsRow">
+        <span class="settingsLabel">Tên người chơi</span>
+        <div class="settingsValueRow">
+          <span class="settingsValue" id="settingsNameValue"></span>
+          <button class="settingsBtn" id="settingsChangeName">Đổi tên</button>
+        </div>
+      </div>
+      <div class="settingsRow">
+        <span class="settingsLabel">Âm thanh</span>
+        <button class="settingsBtn" id="settingsMuteToggle">🔊 Bật</button>
+      </div>
+      <div class="settingsRow settingsRowColumn">
+        <span class="settingsLabel">Độ khó mặc định</span>
+        <div id="settingsDifficultyRow"></div>
+      </div>
+      <div id="settingsVersion">Tank3D Arena · Kết nối: <span id="settingsConnStatus">🟢 Ổn định</span></div>
+      <button class="backBtn" id="settingsBack">← Quay lại</button>
     </div>
 
     <div id="panelTeamSelect" class="panel wide hidden">
@@ -200,6 +271,7 @@
       <h1>Sinh Tồn (Endless)</h1>
       <p>Chống lại các đợt sóng kẻ địch ngày càng mạnh, boss thật xuất hiện định kỳ. Sống sót càng lâu, thưởng càng nhiều.</p>
       <p id="endlessBestLine"></p>
+      <div id="endlessDifficultyRow"></div>
       <div id="endlessChoiceRow">
         <button class="endlessChoiceBtn" id="btnEndlessSolo">
           <span class="endlessChoiceLabel">🧍 Chơi một mình</span>
@@ -232,6 +304,7 @@
 
     <div id="panelTutorial" class="panel wide hidden">
       <h1>Hướng Dẫn Chơi</h1>
+      <div id="tutorialSectionJump"></div>
       <div id="tutorialCard">
         <div id="tutorialIcon"></div>
         <div id="tutorialTitle"></div>
@@ -246,6 +319,11 @@
 
     <div id="panelAchievements" class="panel wide hidden">
       <h1>Thành Tựu</h1>
+      <div id="achievementProgress">
+        <div id="achievementProgressLabel">0 / 0 hoàn thành</div>
+        <div id="achievementProgressBarWrap"><div id="achievementProgressBar"></div></div>
+      </div>
+      <div id="achievementFilterTabs"></div>
       <div id="achievementList"></div>
       <button class="backBtn" id="achievementsBack">← Quay lại</button>
     </div>

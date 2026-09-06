@@ -1,5 +1,18 @@
 * { box-sizing: border-box; }
 
+:root {
+  --accent: #ffb020;
+  --accent-dim: #e6890a;
+  --accent-2: #4da8ff;
+  --accent-2-dim: #1a7fe0;
+  --danger: #ff6b6b;
+  --ok: #3ddc6c;
+  --bg-panel: rgba(20, 26, 38, 0.92);
+  --bg-card: linear-gradient(180deg, #1e2838, #141c28);
+  --border-soft: rgba(255,255,255,0.1);
+  --text-dim: #9aa7ba;
+}
+
 html, body {
   margin: 0;
   padding: 0;
@@ -36,23 +49,32 @@ html, body {
 #loginOverlay.hidden { display: none; }
 
 .panel {
+  position: relative;
   text-align: center;
-  background: rgba(20, 26, 38, 0.9);
+  background: var(--bg-panel);
   border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 14px;
+  border-top: 2px solid rgba(255,176,32,0.55);
+  border-radius: 10px;
   padding: 36px 44px;
   box-shadow: 0 20px 60px rgba(0,0,0,0.5);
   max-height: 86vh;
   overflow-y: auto;
+  animation: panelFadeIn 0.2s ease-out;
+}
+@keyframes panelFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-.panel.wide { width: min(640px, 90vw); }
+.panel.wide { width: min(680px, 92vw); }
 
 .panel h1 {
   margin: 0 0 6px;
-  font-size: 28px;
-  letter-spacing: 1px;
-  color: #ffb020;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: var(--accent);
 }
 
 .panel p {
@@ -85,19 +107,25 @@ button {
   width: 260px;
   margin: 0 auto 12px;
   padding: 13px 14px;
-  font-size: 15px;
-  font-weight: 600;
-  border: none;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  border: 1px solid rgba(255,255,255,0.12);
   border-radius: 8px;
-  background: linear-gradient(180deg, #ffb020, #e6890a);
-  color: #1a1200;
+  background: rgba(255,255,255,0.05);
+  color: #dfe6f0;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
 }
-#continueBtn:hover, .menuBtn:hover { filter: brightness(1.08); }
-#continueBtn:disabled { opacity: 0.6; cursor: default; }
+#continueBtn:hover, .menuBtn:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.25); transform: translateY(-1px); }
+#continueBtn:disabled { opacity: 0.6; cursor: default; transform: none; }
 
-.menuBtn:nth-of-type(2) { background: linear-gradient(180deg, #ff6b6b, #d63a3a); color: #2b0000; }
-.menuBtn:nth-of-type(3) { background: linear-gradient(180deg, #4da8ff, #1a7fe0); color: #001529; }
-.menuBtn:nth-of-type(4) { background: linear-gradient(180deg, #3ddc6c, #22a848); color: #002b0a; }
+#continueBtn, .menuBtnPrimary {
+  background: linear-gradient(180deg, var(--accent), var(--accent-dim));
+  color: #1a1200;
+  border: none;
+}
+#continueBtn:hover, .menuBtnPrimary:hover { filter: brightness(1.08); background: linear-gradient(180deg, var(--accent), var(--accent-dim)); }
 
 #loginStatus {
   margin-top: 12px;
@@ -151,6 +179,139 @@ button {
 }
 .inviteBtn:hover { background: rgba(77,168,255,0.2); }
 .inviteBtn.copied { border-color: #3ddc6c; color: #3ddc6c; }
+
+/* ---------- Play hub: mode cards ---------- */
+#modeCardGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  margin: 18px 0;
+}
+.modeCard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 20px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-card);
+  color: #e8edf4;
+  text-align: center;
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.modeCard:hover, .modeCard:focus-visible {
+  transform: translateY(-4px);
+  border-color: var(--accent);
+  box-shadow: 0 8px 24px rgba(255,176,32,0.15);
+  outline: none;
+}
+.modeCard:active { transform: translateY(-1px); }
+.modeCardIcon { font-size: 30px; margin-bottom: 2px; }
+.modeCardName { font-size: 15px; font-weight: 800; letter-spacing: 1px; }
+.modeCardDesc { font-size: 11.5px; color: var(--text-dim); line-height: 1.4; }
+.modeCardMeta { margin-top: 6px; font-size: 10px; font-weight: 700; letter-spacing: 0.6px; color: var(--accent); }
+.modeCardDaily {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  justify-content: center;
+  gap: 14px;
+  border-color: rgba(77,168,255,0.35);
+}
+.modeCardDaily .modeCardIcon { font-size: 26px; margin: 0; }
+.modeCardDaily .modeCardDesc { text-align: left; max-width: 360px; }
+
+/* ---------- Settings ---------- */
+.settingsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 4px;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: left;
+}
+.settingsRow:last-of-type { border-bottom: none; }
+.settingsRowColumn { flex-direction: column; align-items: stretch; gap: 8px; }
+.settingsLabel { font-size: 13.5px; font-weight: 700; color: #cfd6e0; }
+.settingsValueRow { display: flex; align-items: center; gap: 10px; }
+.settingsValue { font-size: 13px; color: var(--text-dim); }
+.settingsBtn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.06);
+  color: #e8edf4;
+  font-size: 12px;
+  font-weight: 700;
+}
+.settingsBtn:hover { background: rgba(255,255,255,0.14); }
+#settingsVersion { margin-top: 16px; font-size: 11px; color: var(--text-dim); text-align: center; }
+
+/* ---------- Join loading overlay ---------- */
+#joinLoadingOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5,7,11,0.82);
+}
+#joinLoadingBox { text-align: center; }
+#joinLoadingSpinner {
+  width: 46px;
+  height: 46px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  border: 3px solid rgba(255,176,32,0.25);
+  border-top-color: var(--accent);
+  animation: joinSpin 0.8s linear infinite;
+}
+@keyframes joinSpin { to { transform: rotate(360deg); } }
+#joinLoadingText { font-size: 15px; font-weight: 800; letter-spacing: 1.5px; color: #cfe6ff; text-transform: uppercase; }
+#joinLoadingRetryRow { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
+#joinLoadingRetryRow button {
+  padding: 9px 18px;
+  border-radius: 8px;
+  border: none;
+  font-weight: 700;
+  font-size: 12.5px;
+}
+#joinLoadingRetryBtn { background: linear-gradient(180deg, var(--accent), var(--accent-dim)); color: #1a1200; }
+#joinLoadingBackBtn { background: rgba(255,255,255,0.1); color: #e8edf4; border: 1px solid rgba(255,255,255,0.2) !important; }
+
+/* ---------- Achievements: progress + category filter ---------- */
+#achievementProgress { margin-bottom: 14px; }
+#achievementProgressLabel { font-size: 12.5px; font-weight: 700; color: var(--text-dim); margin-bottom: 6px; }
+#achievementProgressBarWrap { height: 8px; background: rgba(0,0,0,0.4); border-radius: 4px; overflow: hidden; }
+#achievementProgressBar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent-dim), var(--accent)); transition: width 0.3s ease; }
+#achievementFilterTabs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin-bottom: 14px; }
+.achievementFilterTab {
+  padding: 6px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.05);
+  color: #cfd6e0;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.achievementFilterTab.active { background: linear-gradient(180deg, var(--accent-2), var(--accent-2-dim)); color: #001529; border-color: transparent; }
+
+/* ---------- Tutorial section jump ---------- */
+#tutorialSectionJump { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin-bottom: 14px; }
+.tutorialJumpBtn {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.05);
+  color: #cfd6e0;
+  font-size: 11px;
+  font-weight: 600;
+}
+.tutorialJumpBtn.active { background: linear-gradient(180deg, var(--accent), var(--accent-dim)); color: #1a1200; border-color: transparent; }
 
 /* ---------- Stage select grid ---------- */
 
@@ -1261,6 +1422,8 @@ body.touch-mode #minimap { bottom: 130px; width: 110px; height: 110px; }
 @media (max-width: 640px) {
   #stageGrid { grid-template-columns: repeat(2, 1fr); }
   .panel { padding: 26px 20px; max-width: 92vw; }
+  .panel.wide { width: 94vw; }
+  #modeCardGrid { grid-template-columns: 1fr; }
   #healthWrap, #reloadWrap { width: 160px; }
   #killfeed { width: 50vw; }
   #scoreboard { min-width: 130px; max-width: 42vw; font-size: 10.5px; }
@@ -1268,4 +1431,24 @@ body.touch-mode #minimap { bottom: 130px; width: 110px; height: 110px; }
   /* The top-left scoreboard can run tall in campaign (a few bot rows), so
      push the centered currency/stage pills below it instead of overlapping. */
   #campaignBar { top: 100px; }
+}
+
+/* Narrow phones (~390-430px) -- tighter padding, single-column everywhere,
+   larger touch targets on the smallest screens rather than just scaling
+   the desktop layout down. */
+@media (max-width: 430px) {
+  .panel { padding: 20px 14px; }
+  .panel h1 { font-size: 21px; letter-spacing: 1.5px; }
+  #continueBtn, .menuBtn { width: 100%; font-size: 13px; }
+  #teamChoiceRow, #kothChoiceRow, #endlessChoiceRow { flex-direction: column; align-items: stretch; }
+  .teamChoiceBtn, .endlessChoiceBtn { width: 100%; }
+  #stageGrid, .chapterStageGrid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .settingsRow { flex-direction: column; align-items: stretch; gap: 8px; }
+  #tutorialSectionJump { gap: 4px; }
+  .tutorialJumpBtn { font-size: 10px; padding: 5px 8px; }
+}
+
+/* Tablets/large phones landscape */
+@media (min-width: 641px) and (max-width: 900px) {
+  #stageGrid, .chapterStageGrid { grid-template-columns: repeat(3, 1fr); }
 }
